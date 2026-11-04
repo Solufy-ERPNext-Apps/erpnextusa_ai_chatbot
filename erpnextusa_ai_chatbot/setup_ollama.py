@@ -19,13 +19,15 @@ def find_ollama_binary():
 
     # 2. Known common locations across macOS and Linux
     candidates = [
+        os.path.join(os.path.dirname(sys.executable), "ollama"),
+        os.path.expanduser("~/.local/bin/ollama"),
+        os.path.expanduser("~/bin/ollama"),
         "/opt/homebrew/bin/ollama",                          # macOS Apple Silicon (M1/M2/M3/M4)
         "/usr/local/bin/ollama",                            # macOS Intel & Linux
         "/usr/bin/ollama",                                  # Linux system
         "/bin/ollama",
-        os.path.expanduser("~/.local/bin/ollama"),
-        os.path.expanduser("~/bin/ollama"),
-        "/Applications/Ollama.app/Contents/Resources/ollama" # macOS Ollama App bundle
+        "/Applications/Ollama.app/Contents/Resources/ollama", # macOS Ollama App bundle
+        os.path.expanduser("~/Applications/Ollama.app/Contents/Resources/ollama")
     ]
     for c in candidates:
         if os.path.isfile(c) and os.access(c, os.X_OK):
@@ -131,7 +133,7 @@ def auto_install_ollama():
                 except Exception:
                     pass
 
-                # Symlink CLI binary into user and system PATH
+                # Symlink CLI binary into user, bench env, and system PATH
                 cli_bin = "/Applications/Ollama.app/Contents/Resources/ollama"
                 if os.path.exists(cli_bin):
                     # Link to ~/.local/bin/ollama
@@ -145,6 +147,16 @@ def auto_install_ollama():
                     except Exception:
                         pass
 
+                    # Link to bench python environment bin (always on PATH during bench commands)
+                    env_bin = os.path.dirname(sys.executable)
+                    env_link = os.path.join(env_bin, "ollama")
+                    try:
+                        if os.path.islink(env_link) or os.path.exists(env_link):
+                            os.remove(env_link)
+                        os.symlink(cli_bin, env_link)
+                    except Exception:
+                        pass
+
                     # Link to /usr/local/bin/ollama if writable
                     try:
                         if os.access("/usr/local/bin", os.W_OK):
@@ -154,6 +166,18 @@ def auto_install_ollama():
                             os.symlink(cli_bin, sys_link)
                     except Exception:
                         pass
+
+                    # Ensure ~/.local/bin is in shell config
+                    for rc_file in [os.path.expanduser("~/.zshrc"), os.path.expanduser("~/.bash_profile")]:
+                        if os.path.exists(rc_file):
+                            try:
+                                with open(rc_file, "r") as f:
+                                    content = f.read()
+                                if ".local/bin" not in content:
+                                    with open(rc_file, "a") as f:
+                                        f.write('\nexport PATH="$HOME/.local/bin:$PATH"\n')
+                            except Exception:
+                                pass
 
                 # Launch Ollama app
                 try:
@@ -169,10 +193,103 @@ def auto_install_ollama():
         except Exception as e:
             print(f"[Ollama] Auto-install failed on macOS: {e}")
 
-    # ------------------ Linux ------------------
+    # ------------------ Linux (Ubuntu, Debian, CentOS, WSL) ------------------
     elif system.startswith("linux"):
+        # 1. Fast zero-sudo user-space installer: extracts standalone bin/ollama directly
         try:
-            print("[Ollama] Installing Ollama via official installer (curl -fsSL https://ollama.com/install.sh | sh)...")
+            import platform, urllib.request, tarfile
+
+            try:
+                import zstandard
+            except ImportError:
+                print("[Ollama] Installing zstandard decompression helper into Python env...")
+                try:
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", "zstandard"], timeout=90)
+                    import zstandard
+                except Exception as pip_err:
+                    print(f"[Ollama] Notice on pip install zstandard: {pip_err}")
+                    zstandard = None
+
+            if "zstandard" in sys.modules:
+                import zstandard
+                arch = platform.machine().lower()
+                filename = "ollama-linux-arm64.tar.zst" if arch in ("aarch64", "arm64") else "ollama-linux-amd64.tar.zst"
+                url = f"https://github.com/ollama/ollama/releases/latest/download/{filename}"
+
+                user_bin = os.path.expanduser("~/.local/bin")
+                os.makedirs(user_bin, exist_ok=True)
+                dest_path = os.path.join(user_bin, "ollama")
+
+                print(f"[Ollama] Downloading official Ollama binary for Linux ({arch})...")
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = urllib.request.urlopen(req, timeout=180)
+
+                dctx = zstandard.ZstdDecompressor()
+                reader = dctx.stream_reader(resp)
+                with tarfile.open(fileobj=reader, mode="r|*") as tar:
+                    for member in tar:
+                        if member.name == "bin/ollama":
+                            f = tar.extractfile(member)
+                            with open(dest_path, "wb") as out:
+                                shutil.copyfileobj(f, out)
+                            os.chmod(dest_path, 0o755)
+                            print(f"[Ollama] Successfully installed Ollama to {dest_path}")
+                            break
+
+                # Symlink to virtualenv bin (always on PATH during bench execution)
+                env_bin = os.path.dirname(sys.executable)
+                env_link = os.path.join(env_bin, "ollama")
+                try:
+                    if os.path.islink(env_link) or os.path.exists(env_link):
+                        os.remove(env_link)
+                    os.symlink(dest_path, env_link)
+                except Exception:
+                    pass
+
+                # Symlink to /usr/local/bin if writable or passwordless sudo
+                if os.access("/usr/local/bin", os.W_OK):
+                    try:
+                        sys_link = "/usr/local/bin/ollama"
+                        if os.path.islink(sys_link) or os.path.exists(sys_link):
+                            os.remove(sys_link)
+                        os.symlink(dest_path, sys_link)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        subprocess.call(["sudo", "-n", "ln", "-sf", dest_path, "/usr/local/bin/ollama"], timeout=5)
+                    except Exception:
+                        pass
+
+                # Ensure ~/.local/bin is in shell config
+                for rc_file in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
+                    if os.path.exists(rc_file):
+                        try:
+                            with open(rc_file, "r") as f:
+                                content = f.read()
+                            if ".local/bin" not in content:
+                                with open(rc_file, "a") as f:
+                                    f.write('\nexport PATH="$HOME/.local/bin:$PATH"\n')
+                        except Exception:
+                            pass
+
+                test_out = subprocess.check_output([dest_path, "--version"], text=True, timeout=5)
+                print(f"[Ollama] Verified Ollama installation: {test_out.strip()}")
+                return dest_path
+        except Exception as e:
+            print(f"[Ollama] Direct Linux install notice: {e}")
+
+        # 2. Fallback: try official curl installer (works if user has zstd + sudo)
+        try:
+            # If zstd is missing, attempt non-interactive install if passwordless sudo exists
+            if not shutil.which("zstd"):
+                try:
+                    subprocess.call(["sudo", "-n", "apt-get", "update", "-y"], timeout=60)
+                    subprocess.call(["sudo", "-n", "apt-get", "install", "-y", "zstd"], timeout=60)
+                except Exception:
+                    pass
+
+            print("[Ollama] Trying official installer script (curl -fsSL https://ollama.com/install.sh | sh)...")
             subprocess.check_call("curl -fsSL https://ollama.com/install.sh | sh", shell=True, timeout=300)
             time.sleep(2)
             found = find_ollama_binary()
