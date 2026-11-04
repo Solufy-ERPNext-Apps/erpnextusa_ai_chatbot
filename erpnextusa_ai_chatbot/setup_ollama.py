@@ -276,23 +276,72 @@ def pull_ollama_model(model_name=DEFAULT_OLLAMA_MODEL, base_url="http://127.0.0.
     return False, f"Could not reach Ollama at {base_url} to pull '{model_name}'."
 
 
+def ensure_node_dependencies():
+    """Ensure @hugeicons/react and @hugeicons/core-free-icons are installed."""
+    try:
+        bench_dir = os.path.abspath(os.path.join(frappe.get_app_path("erpnextusa_ai_chatbot"), "..", "..", ".."))
+        solufy_website_dir = os.path.join(bench_dir, "apps", "solufy_website")
+        target_dir = solufy_website_dir if os.path.exists(solufy_website_dir) else os.path.join(bench_dir, "apps", "erpnextusa_ai_chatbot")
+
+        hugeicons_pkg = os.path.join(target_dir, "node_modules", "@hugeicons", "react")
+        if not os.path.exists(hugeicons_pkg):
+            yarn_bin = shutil.which("yarn") or "/usr/local/bin/yarn" or "/opt/homebrew/bin/yarn"
+            npm_bin = shutil.which("npm") or "/usr/local/bin/npm" or "/opt/homebrew/bin/npm"
+
+            print("[Dependencies] Installing frontend icon packages (@hugeicons/react, @hugeicons/core-free-icons)...")
+            installed = False
+            if yarn_bin and (os.path.exists(yarn_bin) if os.path.isabs(yarn_bin) else shutil.which("yarn")):
+                try:
+                    subprocess.check_call(
+                        [yarn_bin, "add", "@hugeicons/react", "@hugeicons/core-free-icons"],
+                        cwd=target_dir,
+                        timeout=180
+                    )
+                    installed = True
+                    print("[Dependencies] Successfully installed @hugeicons via yarn.")
+                except Exception as e:
+                    print(f"[Dependencies] yarn install skipped ({e}). Trying npm...")
+
+            if not installed and npm_bin and (os.path.exists(npm_bin) if os.path.isabs(npm_bin) else shutil.which("npm")):
+                try:
+                    subprocess.check_call(
+                        [npm_bin, "install", "--save", "@hugeicons/react", "@hugeicons/core-free-icons"],
+                        cwd=target_dir,
+                        timeout=180
+                    )
+                    print("[Dependencies] Successfully installed @hugeicons via npm.")
+                except Exception as e:
+                    print(f"[Dependencies] npm install error: {e}")
+        else:
+            print("[Dependencies] @hugeicons packages are installed and ready.")
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Frontend Dependencies Install Error")
+
+
 def ensure_ollama_model():
     """
     Frappe hook called after_install and after_migrate.
     Automatically:
-      1. Syncs all website knowledge articles into MariaDB.
-      2. Detects if Ollama is installed; if not, automatically installs it!
-      3. Starts the Ollama service in background.
-      4. Pulls llama3.2:1b model automatically.
+      1. Installs frontend node dependencies (@hugeicons/react, @hugeicons/core-free-icons).
+      2. Syncs all website knowledge articles into MariaDB.
+      3. Detects if Ollama is installed; if not, automatically installs it!
+      4. Starts the Ollama service in background.
+      5. Pulls llama3.2:1b model automatically.
     """
-    # 1. Sync Website Knowledge
+    # 1. Install frontend node dependencies
+    try:
+        ensure_node_dependencies()
+    except Exception:
+        pass
+
+    # 2. Sync Website Knowledge
     try:
         from erpnextusa_ai_chatbot.sync_knowledge import sync_all
         sync_all()
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Auto Knowledge Sync Error")
 
-    # 2. Check and handle Ollama model
+    # 3. Check and handle Ollama model
     try:
         cfg = frappe.get_single("Chatbot Settings")
         model = cfg.ollama_model or DEFAULT_OLLAMA_MODEL

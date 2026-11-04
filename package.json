@@ -1,0 +1,11 @@
+{
+  "name": "erpnextusa_ai_chatbot",
+  "version": "1.0.0",
+  "description": "Website chatbot with Gemini, OpenAI and Ollama for ERPNext USA & Solufy",
+  "private": true,
+  "dependencies": {
+    "@hugeicons/core-free-icons": "^4.4.0",
+    "@hugeicons/react": "^1.1.10"
+  }
+}
+
