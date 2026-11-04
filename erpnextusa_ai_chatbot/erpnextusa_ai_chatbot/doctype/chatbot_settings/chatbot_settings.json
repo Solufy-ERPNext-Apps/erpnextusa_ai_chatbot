@@ -47,7 +47,7 @@
       "fieldname": "gemini_model",
       "label": "Gemini Model",
       "fieldtype": "Data",
-      "default": "gemini-2.5-flash"
+      "default": "gemini-3.5-flash-lite"
     },
     {
       "fieldname": "openai_api_key",
@@ -70,7 +70,7 @@
       "fieldname": "ollama_model",
       "label": "Ollama Model",
       "fieldtype": "Data",
-      "default": "llama3.1:8b"
+      "default": "llama3.2:1b"
     },
     {
       "fieldname": "temperature",
