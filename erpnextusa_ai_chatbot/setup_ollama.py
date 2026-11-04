@@ -99,3 +99,4 @@ def ensure_ollama_model():
             print(f"[Ollama] Model '{model}' is already present.")
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Ollama Auto-Install Check Failed")
+
