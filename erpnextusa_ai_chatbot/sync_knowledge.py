@@ -117,7 +117,7 @@ def sync_website_industry(doc, method=None):
         parts.append(f"• Our Solution: {solufy_sol}")
 
     route = getattr(doc, "route", None) or f"industries/{doc.slug or doc.name}"
-    parts.append(f"Explore the solution at: https://erpnextusa.com/{route.lstrip('/')}")
+    parts.append(f"👉 [Explore {industry_name} Solution](/{route.lstrip('/')})")
 
     answer = "\n\n".join(parts)
     keywords = f"{industry_name}, {doc.slug or ''}, ERPNext for {industry_name}, industry, ERP solution"
@@ -154,7 +154,7 @@ def sync_case_study(doc, method=None):
         parts.append(f"• Business Impact & Results: {results}")
 
     route = getattr(doc, "route", None) or f"insights/{doc.slug or doc.name}"
-    parts.append(f"Read full case study: https://erpnextusa.com/{route.lstrip('/')}")
+    parts.append(f"👉 [Read Full Case Study: {title}](/{route.lstrip('/')})")
 
     answer = "\n\n".join(parts)
     keywords = f"{title}, {client}, {industry}, case study, client story, success story, results"
@@ -186,7 +186,7 @@ def sync_team_member(doc, method=None):
         parts.append(f"Bio: {bio}")
     if doc.linkedin_url:
         parts.append(f"LinkedIn: {doc.linkedin_url}")
-    parts.append("Learn more about our team at https://erpnextusa.com/about")
+    parts.append("👉 [Meet Our Engineering Team](/about)")
 
     answer = "\n\n".join(parts)
     keywords = f"{full_name}, {designation}, {department}, team member, leadership, who is {full_name}"
@@ -219,7 +219,7 @@ def sync_blog_post(doc, method=None):
         parts.append(intro)
     
     route = getattr(doc, "route", None) or doc.name
-    parts.append(f"Read full guide at: https://erpnextusa.com/{route.lstrip('/')}")
+    parts.append(f"👉 [Read Full Guide: {title}](/{route.lstrip('/')})")
 
     answer = "\n\n".join(parts)
     keywords = f"{title}, {category}, {doc.blogger or ''}, blog, article, erpnext guide"

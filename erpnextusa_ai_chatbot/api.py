@@ -11,8 +11,18 @@ from frappe.utils import cint
 SETTINGS = "Chatbot Settings"
 
 
-def clean(value, limit=2000):
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", str(value or ""))).strip()[:limit]
+def clean(value, limit=8000, preserve_lines=False):
+    if not value:
+        return ""
+    val = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", str(value), flags=re.DOTALL | re.IGNORECASE)
+    val = re.sub(r"<[^>]*>", " ", val)
+    if preserve_lines:
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in val.splitlines()]
+        val = "\n".join(lines)
+        val = re.sub(r"\n{3,}", "\n\n", val).strip()
+    else:
+        val = re.sub(r"\s+", " ", val).strip()
+    return val[:limit]
 
 
 def settings_enabled():
@@ -67,7 +77,8 @@ def retrieve(question, limit=5):
         p = f"term_{i}"
         conditions.append(f"(title LIKE %({p})s OR keywords LIKE %({p})s OR question LIKE %({p})s OR answer LIKE %({p})s)")
         score_parts.append(
-            f"(CASE WHEN title LIKE %({p})s THEN 5 ELSE 0 END + "
+            f"(CASE WHEN title LIKE %({p})s THEN 8 ELSE 0 END + "
+            f"CASE WHEN category IN ('Industry', 'Service') AND title LIKE %({p})s THEN 5 ELSE 0 END + "
             f"CASE WHEN keywords LIKE %({p})s THEN 4 ELSE 0 END + "
             f"CASE WHEN question LIKE %({p})s THEN 3 ELSE 0 END + "
             f"CASE WHEN answer LIKE %({p})s THEN 1 ELSE 0 END)"
@@ -78,15 +89,16 @@ def retrieve(question, limit=5):
     score_sql = " + ".join(score_parts) if score_parts else "0"
 
     query = f"""
-        SELECT title, answer, content, priority, ({score_sql}) AS match_score
+        SELECT title, answer, content, priority, IFNULL(likes, 0) AS likes,
+               (({score_sql}) + (IFNULL(likes, 0) * 10)) AS match_score
         FROM `tabChatbot Knowledge`
         WHERE published = 1 AND ({where_sql})
-        ORDER BY match_score DESC, priority DESC
+        ORDER BY match_score DESC, likes DESC, priority DESC
         LIMIT {int(limit)}
     """
     try:
         rows = frappe.db.sql(query, params, as_dict=True)
-        return [dict(title=clean(r.get("title"), 160), answer=clean(r.get("answer") or r.get("content"), 2000)) for r in rows]
+        return [dict(title=clean(r.get("title"), 160), answer=clean(r.get("answer") or r.get("content"), 8000, preserve_lines=True)) for r in rows]
     except Exception:
         return []
 
@@ -189,21 +201,39 @@ def provider_reply(cfg, question, knowledge):
         ollama_timeout = max(timeout, 120)
 
         # For Ollama on CPU: Keep context ultra-compact (< 200 tokens) so CPU prompt evaluation is near-instant (< 0.2s)
+        # For Ollama: If knowledge base has an approved, relevant answer, return it immediately so response is near-instant (< 50ms)
+        if knowledge and len(knowledge) > 0:
+            primary = knowledge[0]
+            ans = primary.get("answer") or primary.get("content") or ""
+            if ans and len(ans.strip()) > 30:
+                extra = []
+                for k in knowledge[1:3]:
+                    t = k.get("title")
+                    a = clean(k.get("answer") or k.get("content") or "", 140)
+                    if t and a and t.lower() not in primary.get("title", "").lower():
+                        extra.append(f"• **{t}**: {a}")
+                if extra:
+                    ans += "\n\n" + "\n".join(extra)
+                return ans
+
         is_greeting = question.lower().strip(" .!?,") in {
             "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
             "greetings", "howdy", "hola", "namaste", "what's up", "whats up"
         }
         if is_greeting:
-            ollama_context = "Solufy (https://www.solufyerp.com/) & ERPNext USA (https://erpnextusa.com/) provide ERPNext implementation, consulting, customization, and support."
-            num_predict = 40
-        else:
-            compact_snippets = []
-            for item in knowledge[:2]:
-                ans_text = clean(item.get("answer") or "", 300)
-                if ans_text:
-                    compact_snippets.append(f"• {item['title']}: {ans_text}")
-            ollama_context = "\n".join(compact_snippets) or "Solufy provides ERPNext Consulting, Implementation, Development, and Support."
-            num_predict = min(max_tokens, 140)
+            return (
+                "Hello! I am your AI ERP Assistant for **ERPNext USA** (https://erpnextusa.com/) and **Solufy** (https://www.solufyerp.com/).\n\n"
+                "We provide full-cycle ERPNext consulting, implementation, custom Frappe app development, and SLA-backed support with dedicated US EST/PST business hours overlap.\n\n"
+                "How can I help you today? Feel free to ask about our services, implementation blueprints, or request a custom estimate!"
+            )
+
+        compact_snippets = []
+        for item in knowledge[:2]:
+            ans_text = clean(item.get("answer") or item.get("content") or "", 200)
+            if ans_text:
+                compact_snippets.append(f"• {item['title']}: {ans_text}")
+        ollama_context = "\n".join(compact_snippets) or "Solufy provides ERPNext Consulting, Implementation, Development, and Support."
+        num_predict = 45
 
         ollama_instruction = (
             "You are the official AI Assistant for ERPNext USA (https://erpnextusa.com/) and Solufy (https://www.solufyerp.com/). "
@@ -215,29 +245,84 @@ def provider_reply(cfg, question, knowledge):
             {"role": "user", "content": question}
         ]
 
-        res = requests.post(base + "/api/chat", json={
-            "model": model,
-            "messages": ollama_messages,
-            "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": num_predict,
-                "num_thread": 6
-            }
-        }, timeout=ollama_timeout)
-        if not res.ok:
-            try:
-                err_msg = res.json().get("error")
-            except Exception:
-                err_msg = res.text
-            raise ValueError(f"Ollama error ({res.status_code}): {err_msg or res.reason}")
-        return res.json()["message"]["content"]
+        try:
+            res = requests.post(base + "/api/chat", json={
+                "model": model,
+                "messages": ollama_messages,
+                "stream": False,
+                "keep_alive": "15m",
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": num_predict,
+                    "num_thread": 8
+                }
+            }, timeout=8)
+            if res.ok:
+                return res.json()["message"]["content"]
+        except Exception:
+            pass
+
+        # Fallback to verified company info
+        return (
+            "Solufy (https://www.solufyerp.com/) & ERPNext USA (https://erpnextusa.com/) deliver enterprise-grade "
+            "ERPNext implementations, custom Frappe apps, workflow automation, and SLA support.\n\n"
+            "• **US Hours Overlap**: Dedicated technical lead coverage in Eastern (EST) and Pacific (PST) hours.\n"
+            "• **Direct US Line**: +1 (848) 248-0021\n"
+            "• **Email**: contact@solufy.in"
+        )
     raise ValueError("Unsupported provider")
+
+
+def format_answer_links(text):
+    if not text:
+        return text
+
+    # Transform explicit lines like "Explore the solution at: https://erpnextusa.com/industries/xyz"
+    def _rep_labeled(match):
+        url = match.group(1).strip()
+        parsed = urlparse(url)
+        path = parsed.path.strip("/")
+        slug = path.split("/")[-1] if path else "Solution"
+        friendly = slug.replace("erpnext-for-", "").replace("erpnext-", "").replace("-", " ").title()
+        friendly_label = f"ERPNext for {friendly}" if not friendly.lower().startswith("erpnext") else friendly
+        return f"👉 **[{friendly_label}](/{path})**"
+
+    text = re.sub(
+        r"(?:Explore the solution at|Read full case study|Read full guide at|Learn more at)[:\s]+(https?://(?:www\.)?erpnextusa\.com/([a-zA-Z0-9_\-\/]+))",
+        _rep_labeled,
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # Transform any remaining bare erpnextusa.com URLs that are NOT preceded by ](
+    def _rep_bare(match):
+        url = match.group(0).strip()
+        parsed = urlparse(url)
+        path = parsed.path.strip("/")
+        if not path:
+            return "[ERPNext USA](/)"
+        slug = path.split("/")[-1]
+        friendly = slug.replace("erpnext-for-", "").replace("erpnext-", "").replace("-", " ").title()
+        return f"[👉 {friendly}](/{path})"
+
+    text = re.sub(r"(?<!\]\()(https?://(?:www\.)?erpnextusa\.com/([a-zA-Z0-9_\-\/]+))", _rep_bare, text)
+    return text
+
+
+def detect_lead_intent(message, answer=""):
+    combined = (str(message or "") + " " + str(answer or "")).lower()
+    keywords = [
+        "quote", "estimate", "pricing", "cost", "implement", "proposal", "demo",
+        "contact", "hire", "consultation", "discovery", "talk to", "speak with",
+        "reach out", "call me", "get in touch", "custom app", "start project",
+        "services", "support", "help", "yes", "sure", "schedule", "need"
+    ]
+    return any(k in combined for k in keywords)
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def chat(message=None, session_id=None):
-    throttle("chat", 15, 60)
+    throttle("chat", 60, 60)
     message = clean(message)
     if not message: frappe.throw(_("Enter a message"))
     cfg = settings_enabled()
@@ -246,7 +331,29 @@ def chat(message=None, session_id=None):
         answer = provider_reply(cfg, message, kb)
     except Exception:
         frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Provider")
-        frappe.throw(_("The assistant is temporarily unavailable"))
+        # Graceful fallback to verified knowledge if provider times out or fails
+        if kb:
+            primary = kb[0]
+            answer = primary.get("answer") or primary.get("content") or ""
+            if len(kb) > 1:
+                bullets = []
+                for item in kb[1:4]:
+                    t = item.get("title")
+                    a = clean(item.get("answer") or item.get("content") or "", 160)
+                    if t and a:
+                        bullets.append(f"• **{t}**: {a}")
+                if bullets:
+                    answer += "\n\n" + "\n".join(bullets)
+        else:
+            answer = (
+                "Solufy (https://www.solufyerp.com/) & ERPNext USA (https://erpnextusa.com/) provide full-cycle "
+                "ERPNext Implementation, Consulting, Custom Development, Support, and Training.\n\n"
+                "• **US Hours Overlap**: Dedicated coverage in EST & PST business hours.\n"
+                "• **Direct US Line**: +1 (848) 248-0021\n"
+                "• **Email**: contact@solufy.in"
+            )
+
+    answer = format_answer_links(answer)
     sid = clean(session_id, 100) if session_id else uuid.uuid4().hex
     try:
         frappe.get_doc({"doctype": "Chatbot Conversation", "session_id": sid,
@@ -254,12 +361,62 @@ def chat(message=None, session_id=None):
             "provider": cfg.active_provider}).insert(ignore_permissions=True)
     except Exception:
         frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Logging")
-    return {"answer": answer, "session_id": sid}
+
+    res_data = {"answer": answer, "session_id": sid}
+
+    # Contextual follow-up questions + one common option to contact the team on every chat
+    msg_low = (message or "").lower()
+    ans_low = (answer or "").lower()
+
+    if any(k in msg_low or k in ans_low for k in ["manufactur", "bom", "shop floor", "mrp", "work order"]):
+        lead_opts = [
+            "❓ What ERPNext modules manage BOM and shop floor routing?",
+            "❓ How does Solufy handle data migration from legacy ERP?",
+            "✉️ Contact Team"
+        ]
+    elif any(k in msg_low or k in ans_low for k in ["quote", "price", "cost", "pricing", "estimate"]):
+        lead_opts = [
+            "🚀 Get Project Estimate",
+            "❓ What factors determine ERPNext implementation cost & timeline?",
+            "✉️ Contact Team"
+        ]
+    elif any(k in msg_low or k in ans_low for k in ["implement", "setup", "rollout", "migration", "start"]):
+        lead_opts = [
+            "❓ What is the typical ERPNext rollout timeline with Solufy?",
+            "❓ How do you guarantee US EST/PST business hours overlap?",
+            "✉️ Contact Team"
+        ]
+    elif any(k in msg_low or k in ans_low for k in ["custom", "develop", "app", "workflow", "integration", "frappe"]):
+        lead_opts = [
+            "❓ Can Solufy build custom Frappe apps and DocTypes for our team?",
+            "❓ How do you prevent technical debt during future ERPNext upgrades?",
+            "✉️ Contact Team"
+        ]
+    elif any(k in msg_low or k in ans_low for k in ["support", "sla", "maintain", "issue", "bug"]):
+        lead_opts = [
+            "❓ What SLA response times and engineer coverage do you offer?",
+            "❓ Can Solufy audit and optimize our existing ERPNext setup?",
+            "✉️ Contact Team"
+        ]
+    else:
+        lead_opts = [
+            "❓ Which industries do you build ERPNext solutions for?",
+            "❓ Can you review and improve our existing ERP system?",
+            "✉️ Contact Team"
+        ]
+
+    if "✉️ Contact Team" not in lead_opts:
+        lead_opts.append("✉️ Contact Team")
+
+    res_data["suggest_lead"] = True
+    res_data["lead_prompt"] = "Related questions & next steps:"
+    res_data["lead_options"] = lead_opts
+    return res_data
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def submit_lead(name=None, email=None, phone=None, message=None, consent=0):
-    throttle("lead", 3, 3600)
+    throttle("lead", 20, 3600)
     cfg = settings_enabled()
     if not cint(consent): frappe.throw(_("Consent is required"))
     name, email, phone, message = clean(name, 140), clean(email, 140), clean(phone, 40), clean(message)
@@ -284,6 +441,55 @@ def submit_lead(name=None, email=None, phone=None, message=None, consent=0):
     lead.insert(ignore_permissions=True)
     # Do not return a predictable CRM record ID to unauthenticated visitors.
     return {"success": True}
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def like_response(session_id=None, message=None, answer=None, liked=1):
+    throttle("like", 60, 60)
+    session_id = clean(session_id, 100)
+    message = clean(message, 1000)
+    answer = clean(answer, 2000)
+    is_liked = cint(liked)
+    delta = 1 if is_liked else -1
+
+    # 1. Update tabChatbot Conversation if session_id matches
+    if session_id:
+        try:
+            frappe.db.sql(
+                "UPDATE `tabChatbot Conversation` SET liked = %s WHERE session_id = %s ORDER BY creation DESC LIMIT 1",
+                (1 if is_liked else 0, session_id)
+            )
+        except Exception:
+            pass
+
+    # 2. Boost matching tabChatbot Knowledge entry so future queries give this answer
+    matched_id = None
+    if message:
+        terms = [t for t in re.findall(r"[a-z0-9]{3,}", message.lower()) if t not in STOP_WORDS]
+        if terms:
+            conds = " OR ".join(["title LIKE %s OR keywords LIKE %s OR question LIKE %s" for _ in terms[:4]])
+            vals = []
+            for t in terms[:4]:
+                vals.extend([f"%{t}%", f"%{t}%", f"%{t}%"])
+            try:
+                row = frappe.db.sql(
+                    f"SELECT name, likes, priority FROM `tabChatbot Knowledge` WHERE {conds} ORDER BY priority DESC LIMIT 1",
+                    tuple(vals),
+                    as_dict=True
+                )
+                if row:
+                    matched_id = row[0].name
+                    new_likes = max(0, cint(row[0].likes) + delta)
+                    new_priority = max(0, cint(row[0].priority) + (5 * delta))
+                    frappe.db.sql(
+                        "UPDATE `tabChatbot Knowledge` SET likes = %s, priority = %s WHERE name = %s",
+                        (new_likes, new_priority, matched_id)
+                    )
+            except Exception:
+                frappe.log_error(frappe.get_traceback(), "ERPNextUSA Like Feedback")
+
+    frappe.db.commit()
+    return {"success": True, "liked": is_liked, "knowledge_id": matched_id}
 
 
 @frappe.whitelist(methods=["POST"])
