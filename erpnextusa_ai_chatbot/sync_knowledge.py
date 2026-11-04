@@ -47,7 +47,7 @@ def upsert_knowledge(source_key, data):
 
 def delete_synced_knowledge(doc, method=None):
     """Hook on_trash to clean up synced knowledge when the parent website doc is deleted."""
-    source_key = f"auto:{doc.doctype}:{doc.name}"
+    source_key = f"auto:{doc.doctype}:{doc.name}"[:140]
     try:
         existing_name = frappe.db.get_value("Chatbot Knowledge", {"source_url": source_key}, "name")
         if existing_name:
@@ -64,7 +64,7 @@ def sync_website_service(doc, method=None):
     if isinstance(doc, str):
         doc = frappe.get_doc("Website Service", doc)
 
-    source_key = f"auto:Website Service:{doc.name}"
+    source_key = f"auto:Website Service:{doc.name}"[:140]
     service_name = doc.service_name or doc.name
     overview = clean_text(doc.overview or doc.short_description or "")
     problem = clean_text(doc.problem_statement or "")
@@ -99,7 +99,7 @@ def sync_website_industry(doc, method=None):
     if isinstance(doc, str):
         doc = frappe.get_doc("Website Industry", doc)
 
-    source_key = f"auto:Website Industry:{doc.name}"
+    source_key = f"auto:Website Industry:{doc.name}"[:140]
     industry_name = doc.industry_name or doc.name
     overview = clean_text(doc.overview or doc.short_description or "")
     challenges = clean_text(doc.industry_challenges or "")
@@ -137,7 +137,7 @@ def sync_case_study(doc, method=None):
     if isinstance(doc, str):
         doc = frappe.get_doc("Case Study", doc)
 
-    source_key = f"auto:Case Study:{doc.name}"
+    source_key = f"auto:Case Study:{doc.name}"[:140]
     title = doc.title or doc.name
     client = doc.client or "Enterprise Client"
     industry = doc.industry or "General"
@@ -174,7 +174,7 @@ def sync_team_member(doc, method=None):
     if isinstance(doc, str):
         doc = frappe.get_doc("Website Team Member", doc)
 
-    source_key = f"auto:Website Team Member:{doc.name}"
+    source_key = f"auto:Website Team Member:{doc.name}"[:140]
     full_name = doc.full_name or doc.name
     designation = doc.designation or "Solution Specialist"
     department = doc.department or "Frappe & ERPNext Architecture"
@@ -206,7 +206,7 @@ def sync_blog_post(doc, method=None):
     if isinstance(doc, str):
         doc = frappe.get_doc("Blog Post", doc)
 
-    source_key = f"auto:Blog Post:{doc.name}"
+    source_key = f"auto:Blog Post:{doc.name}"[:140]
     title = doc.title or doc.name
     category = doc.blog_category or "Insights"
     intro = clean_text(doc.blog_intro or doc.meta_description or "")

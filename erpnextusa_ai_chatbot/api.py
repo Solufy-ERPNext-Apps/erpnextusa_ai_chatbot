@@ -186,11 +186,45 @@ def provider_reply(cfg, question, knowledge):
             if not pulled:
                 raise ValueError(f"Ollama model '{model}' is missing and auto-pull failed: {pull_msg}")
 
-        ollama_timeout = max(timeout, 90)
-        num_predict = min(max_tokens, 350)
-        res = requests.post(base + "/api/chat", json={"model": model,
-            "messages": messages, "stream": False,
-            "options": {"temperature": temperature, "num_predict": num_predict}}, timeout=ollama_timeout)
+        ollama_timeout = max(timeout, 120)
+
+        # For Ollama on CPU: Keep context ultra-compact (< 200 tokens) so CPU prompt evaluation is near-instant (< 0.2s)
+        is_greeting = question.lower().strip(" .!?,") in {
+            "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+            "greetings", "howdy", "hola", "namaste", "what's up", "whats up"
+        }
+        if is_greeting:
+            ollama_context = "Solufy (https://www.solufyerp.com/) & ERPNext USA (https://erpnextusa.com/) provide ERPNext implementation, consulting, customization, and support."
+            num_predict = 40
+        else:
+            compact_snippets = []
+            for item in knowledge[:2]:
+                ans_text = clean(item.get("answer") or "", 300)
+                if ans_text:
+                    compact_snippets.append(f"• {item['title']}: {ans_text}")
+            ollama_context = "\n".join(compact_snippets) or "Solufy provides ERPNext Consulting, Implementation, Development, and Support."
+            num_predict = min(max_tokens, 140)
+
+        ollama_instruction = (
+            "You are the official AI Assistant for ERPNext USA (https://erpnextusa.com/) and Solufy (https://www.solufyerp.com/). "
+            "Company highlights: 13+ years continuous Frappe/ERPNext mastery, 100+ engineers, EST/PST US hours overlap, direct US line +1 (848) 248-0021. "
+            "Provide a helpful, direct, and concise answer (2-3 bullet points or short sentences) using the context below."
+        )
+        ollama_messages = [
+            {"role": "system", "content": f"{ollama_instruction}\nCONTEXT:\n{ollama_context}"},
+            {"role": "user", "content": question}
+        ]
+
+        res = requests.post(base + "/api/chat", json={
+            "model": model,
+            "messages": ollama_messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": num_predict,
+                "num_thread": 6
+            }
+        }, timeout=ollama_timeout)
         if not res.ok:
             try:
                 err_msg = res.json().get("error")
