@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "erpnextusa_ai_chatbot"
+version = "1.0.0"
+description = "Frappe website chatbot with consent-based CRM lead capture"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.31"]
+[tool.setuptools.packages.find]
+include = ["erpnextusa_ai_chatbot*"]
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.js", "*.css", "*.txt"]

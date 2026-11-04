@@ -1,0 +1,52 @@
+{
+  "doctype": "DocType",
+  "name": "Chatbot Conversation",
+  "module": "ERPNextUSA AI Chatbot",
+  "custom": 0,
+  "istable": 0,
+  "issingle": 0,
+  "engine": "InnoDB",
+  "field_order": [
+    "session_id",
+    "provider",
+    "visitor_message",
+    "assistant_message"
+  ],
+  "fields": [
+    {
+      "fieldname": "session_id",
+      "label": "Session ID",
+      "fieldtype": "Data",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "provider",
+      "label": "Provider",
+      "fieldtype": "Data",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "visitor_message",
+      "label": "Visitor Message",
+      "fieldtype": "Small Text"
+    },
+    {
+      "fieldname": "assistant_message",
+      "label": "Assistant Message",
+      "fieldtype": "Long Text"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "report": 1,
+      "export": 1
+    }
+  ],
+  "track_changes": 1,
+  "allow_rename": 0
+}

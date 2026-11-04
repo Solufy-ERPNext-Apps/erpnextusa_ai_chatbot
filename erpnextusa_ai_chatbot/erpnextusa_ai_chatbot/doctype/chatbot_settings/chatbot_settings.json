@@ -1,0 +1,131 @@
+{
+  "doctype": "DocType",
+  "name": "Chatbot Settings",
+  "module": "ERPNextUSA AI Chatbot",
+  "custom": 0,
+  "istable": 0,
+  "issingle": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "enabled",
+    "active_provider",
+    "gemini_api_key",
+    "gemini_model",
+    "openai_api_key",
+    "openai_model",
+    "ollama_url",
+    "ollama_model",
+    "temperature",
+    "max_output_tokens",
+    "max_knowledge_results",
+    "request_timeout",
+    "privacy_policy_url",
+    "lead_source",
+    "retention_days"
+  ],
+  "fields": [
+    {
+      "fieldname": "enabled",
+      "label": "Enabled",
+      "fieldtype": "Check",
+      "default": "0"
+    },
+    {
+      "fieldname": "active_provider",
+      "label": "Active Provider",
+      "fieldtype": "Select",
+      "options": "Gemini\nOpenAI\nOllama",
+      "default": "Ollama",
+      "reqd": 1
+    },
+    {
+      "fieldname": "gemini_api_key",
+      "label": "Gemini API Key",
+      "fieldtype": "Password"
+    },
+    {
+      "fieldname": "gemini_model",
+      "label": "Gemini Model",
+      "fieldtype": "Data",
+      "default": "gemini-2.5-flash"
+    },
+    {
+      "fieldname": "openai_api_key",
+      "label": "OpenAI API Key",
+      "fieldtype": "Password"
+    },
+    {
+      "fieldname": "openai_model",
+      "label": "OpenAI Model",
+      "fieldtype": "Data",
+      "default": "gpt-4o-mini"
+    },
+    {
+      "fieldname": "ollama_url",
+      "label": "Ollama URL",
+      "fieldtype": "Data",
+      "default": "http://127.0.0.1:11434"
+    },
+    {
+      "fieldname": "ollama_model",
+      "label": "Ollama Model",
+      "fieldtype": "Data",
+      "default": "llama3.1:8b"
+    },
+    {
+      "fieldname": "temperature",
+      "label": "Temperature",
+      "fieldtype": "Float",
+      "default": "0.3"
+    },
+    {
+      "fieldname": "max_output_tokens",
+      "label": "Max Output Tokens",
+      "fieldtype": "Int",
+      "default": "700"
+    },
+    {
+      "fieldname": "max_knowledge_results",
+      "label": "Max Knowledge Results",
+      "fieldtype": "Int",
+      "default": "5"
+    },
+    {
+      "fieldname": "request_timeout",
+      "label": "Timeout Seconds",
+      "fieldtype": "Int",
+      "default": "45"
+    },
+    {
+      "fieldname": "privacy_policy_url",
+      "label": "Privacy Policy URL",
+      "fieldtype": "Data",
+      "default": "/privacy-policy"
+    },
+    {
+      "fieldname": "lead_source",
+      "label": "Lead Source",
+      "fieldtype": "Data",
+      "default": "Website"
+    },
+    {
+      "fieldname": "retention_days",
+      "label": "Conversation Retention Days",
+      "fieldtype": "Int",
+      "default": "30"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "report": 1,
+      "export": 1
+    }
+  ],
+  "track_changes": 1,
+  "allow_rename": 0
+}

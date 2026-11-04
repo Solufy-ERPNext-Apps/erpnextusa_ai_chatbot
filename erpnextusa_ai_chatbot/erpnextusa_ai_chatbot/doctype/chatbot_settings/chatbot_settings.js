@@ -1,0 +1,1 @@
+frappe.ui.form.on("Chatbot Settings", {refresh(frm) {frm.add_custom_button(__("Test Active Provider"), () => {frappe.call({method:"erpnextusa_ai_chatbot.api.test_provider",type:"POST",freeze:true,callback(r) {if(r.message?.success) frappe.msgprint({title:__("Connection successful"),message:frappe.utils.escape_html(r.message.response),indicator:"green"});}});});}});

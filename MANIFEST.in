@@ -1,0 +1,1 @@
+recursive-include erpnextusa_ai_chatbot *.json *.js *.css *.txt
