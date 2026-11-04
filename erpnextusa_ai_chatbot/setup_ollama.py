@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import shutil
+import zipfile
 import subprocess
 import requests
 import frappe
@@ -43,13 +44,13 @@ def is_ollama_service_running(base_url="http://127.0.0.1:11434"):
 
 def try_start_ollama_service(ollama_bin, base_url="http://127.0.0.1:11434"):
     """If Ollama is installed but daemon is not running, attempt to start it in background."""
-    if not ollama_bin or is_ollama_service_running(base_url):
+    if is_ollama_service_running(base_url):
         return True
 
     # On macOS, if /Applications/Ollama.app exists, try launch
     if sys.platform == "darwin" and os.path.exists("/Applications/Ollama.app"):
         try:
-            subprocess.Popen(["open", "-a", "Ollama"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(["open", "-a", "Ollama", "--args", "hidden"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             for _ in range(8):
                 time.sleep(0.5)
                 if is_ollama_service_running(base_url):
@@ -58,27 +59,136 @@ def try_start_ollama_service(ollama_bin, base_url="http://127.0.0.1:11434"):
             pass
 
     # Otherwise run `ollama serve` in detached background session
-    try:
-        subprocess.Popen(
-            [ollama_bin, "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-        for _ in range(6):
-            time.sleep(0.5)
-            if is_ollama_service_running(base_url):
-                return True
-    except Exception:
-        pass
+    if ollama_bin:
+        try:
+            subprocess.Popen(
+                [ollama_bin, "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+            for _ in range(6):
+                time.sleep(0.5)
+                if is_ollama_service_running(base_url):
+                    return True
+        except Exception:
+            pass
 
     return False
+
+
+def auto_install_ollama():
+    """
+    Automatically downloads and installs Ollama on macOS or Linux
+    without requiring manual steps.
+    """
+    system = sys.platform
+    print("[Ollama] Ollama not found on this system. Initiating automatic installation...")
+
+    # ------------------ macOS ------------------
+    if system == "darwin":
+        # 1. Try Homebrew if brew command exists
+        brew_bin = shutil.which("brew") or "/opt/homebrew/bin/brew" or "/usr/local/bin/brew"
+        if os.path.exists(brew_bin) if os.path.isabs(brew_bin) else shutil.which("brew"):
+            try:
+                print("[Ollama] Installing Ollama via Homebrew...")
+                subprocess.check_call([brew_bin, "install", "ollama"], timeout=300)
+                try:
+                    subprocess.Popen([brew_bin, "services", "start", "ollama"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+                time.sleep(2)
+                found = find_ollama_binary()
+                if found:
+                    print(f"[Ollama] Successfully installed Ollama via Homebrew: {found}")
+                    return found
+            except Exception as e:
+                print(f"[Ollama] Homebrew installation skipped ({e}). Downloading official Ollama bundle...")
+
+        # 2. Direct macOS App download (Official Ollama-darwin.zip)
+        try:
+            print("[Ollama] Downloading official Ollama for macOS (https://ollama.com/download/Ollama-darwin.zip)...")
+            temp_zip = "/tmp/Ollama-darwin.zip"
+            res = requests.get("https://ollama.com/download/Ollama-darwin.zip", stream=True, timeout=240)
+            if res.ok:
+                with open(temp_zip, "wb") as f:
+                    for chunk in res.iter_content(chunk_size=1024 * 1024):
+                        if chunk: f.write(chunk)
+
+                print("[Ollama] Extracting Ollama to /Applications/Ollama.app...")
+                app_dest = "/Applications/Ollama.app"
+                if os.path.exists(app_dest):
+                    try:
+                        shutil.rmtree(app_dest, ignore_errors=True)
+                    except Exception:
+                        pass
+
+                with zipfile.ZipFile(temp_zip, "r") as z:
+                    z.extractall("/Applications")
+
+                try:
+                    os.remove(temp_zip)
+                except Exception:
+                    pass
+
+                # Symlink CLI binary into user and system PATH
+                cli_bin = "/Applications/Ollama.app/Contents/Resources/ollama"
+                if os.path.exists(cli_bin):
+                    # Link to ~/.local/bin/ollama
+                    user_bin_dir = os.path.expanduser("~/.local/bin")
+                    os.makedirs(user_bin_dir, exist_ok=True)
+                    user_link = os.path.join(user_bin_dir, "ollama")
+                    try:
+                        if os.path.islink(user_link) or os.path.exists(user_link):
+                            os.remove(user_link)
+                        os.symlink(cli_bin, user_link)
+                    except Exception:
+                        pass
+
+                    # Link to /usr/local/bin/ollama if writable
+                    try:
+                        if os.access("/usr/local/bin", os.W_OK):
+                            sys_link = "/usr/local/bin/ollama"
+                            if os.path.islink(sys_link) or os.path.exists(sys_link):
+                                os.remove(sys_link)
+                            os.symlink(cli_bin, sys_link)
+                    except Exception:
+                        pass
+
+                # Launch Ollama app
+                try:
+                    subprocess.Popen(["open", "-a", "Ollama", "--args", "hidden"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+
+                time.sleep(3)
+                found = find_ollama_binary()
+                if found:
+                    print(f"[Ollama] Successfully installed and launched Ollama: {found}")
+                    return found
+        except Exception as e:
+            print(f"[Ollama] Auto-install failed on macOS: {e}")
+
+    # ------------------ Linux ------------------
+    elif system.startswith("linux"):
+        try:
+            print("[Ollama] Installing Ollama via official installer (curl -fsSL https://ollama.com/install.sh | sh)...")
+            subprocess.check_call("curl -fsSL https://ollama.com/install.sh | sh", shell=True, timeout=300)
+            time.sleep(2)
+            found = find_ollama_binary()
+            if found:
+                print(f"[Ollama] Successfully installed Ollama on Linux: {found}")
+                return found
+        except Exception as e:
+            print(f"[Ollama] Linux auto-install script failed: {e}")
+
+    return find_ollama_binary()
 
 
 def is_model_installed(base_url="http://127.0.0.1:11434", model_name=DEFAULT_OLLAMA_MODEL, ollama_bin=None):
     """Check if model is present in Ollama via HTTP API or CLI."""
     target_base = (model_name.split(":")[0] if ":" in model_name else model_name).lower()
-    
+
     # 1. Check HTTP API if service is running
     try:
         res = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=2)
@@ -169,8 +279,11 @@ def pull_ollama_model(model_name=DEFAULT_OLLAMA_MODEL, base_url="http://127.0.0.
 def ensure_ollama_model():
     """
     Frappe hook called after_install and after_migrate.
-    Automatically checks and pulls llama3.2:1b if not present.
-    Also syncs all website knowledge articles.
+    Automatically:
+      1. Syncs all website knowledge articles into MariaDB.
+      2. Detects if Ollama is installed; if not, automatically installs it!
+      3. Starts the Ollama service in background.
+      4. Pulls llama3.2:1b model automatically.
     """
     # 1. Sync Website Knowledge
     try:
@@ -188,12 +301,17 @@ def ensure_ollama_model():
         ollama_bin = find_ollama_binary()
         is_running = is_ollama_service_running(base)
 
+        # If Ollama is not installed on the system, auto-install it!
+        if not ollama_bin and not is_running:
+            ollama_bin = auto_install_ollama()
+            is_running = is_ollama_service_running(base)
+
         if not is_running and ollama_bin:
             is_running = try_start_ollama_service(ollama_bin, base)
 
         if is_running or ollama_bin:
             if not is_model_installed(base, model, ollama_bin):
-                print(f"[Ollama] Model '{model}' not found in Ollama. Auto-running: ollama pull {model} ...")
+                print(f"[Ollama] Model '{model}' not found in Ollama. Auto-downloading: ollama pull {model} ...")
                 success, msg = pull_ollama_model(model, base, ollama_bin=ollama_bin, block=False)
                 print(f"[Ollama] {msg}")
             else:
