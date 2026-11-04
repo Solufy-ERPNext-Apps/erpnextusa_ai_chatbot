@@ -339,9 +339,13 @@ def chat(message=None, session_id=None):
                 bullets = []
                 for item in kb[1:4]:
                     t = item.get("title")
-                    a = clean(item.get("answer") or item.get("content") or "", 160)
-                    if t and a:
-                        bullets.append(f"• **{t}**: {a}")
+                    raw_a = item.get("answer") or item.get("content") or ""
+                    first_line = raw_a.strip().split("\n")[0] if raw_a else ""
+                    first_line = re.sub(r"\s+", " ", first_line).strip()
+                    if len(first_line) > 130:
+                        first_line = first_line[:127].rsplit(" ", 1)[0] + "..."
+                    if t and first_line:
+                        bullets.append(f"• **{t}**: {first_line}")
                 if bullets:
                     answer += "\n\n" + "\n".join(bullets)
         else:

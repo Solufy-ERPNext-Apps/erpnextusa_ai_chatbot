@@ -6,7 +6,10 @@ from frappe.utils import strip_html
 def clean_text(html_or_text, max_len=1800):
     if not html_or_text:
         return ""
-    text = strip_html(str(html_or_text))
+    s = str(html_or_text)
+    # Ensure block tags have spacing so words across paragraphs/list items don't merge
+    s = re.sub(r"</(?:p|div|li|h[1-6]|tr|br\s*/?)>", " ", s, flags=re.IGNORECASE)
+    text = strip_html(s)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:max_len]
 
@@ -79,7 +82,7 @@ def sync_website_service(doc, method=None):
         parts.append(f"• Solufy approach: {solution}")
     
     route = getattr(doc, "route", None) or f"services/{doc.slug or doc.name}"
-    parts.append(f"Learn more at: https://erpnextusa.com/{route.lstrip('/')}")
+    parts.append(f"👉 [Explore {service_name}](/{route.lstrip('/')})")
 
     answer = "\n\n".join(parts)
     keywords = f"{service_name}, {doc.slug or ''}, ERPNext {service_name}, service, consulting, implementation"
