@@ -15,7 +15,8 @@
     "question",
     "answer",
     "content",
-    "source_url"
+    "source_url",
+    "likes"
   ],
   "fields": [
     {
@@ -67,6 +68,13 @@
       "fieldname": "source_url",
       "label": "Source URL",
       "fieldtype": "Data"
+    },
+    {
+      "fieldname": "likes",
+      "label": "Likes",
+      "fieldtype": "Int",
+      "default": "0",
+      "read_only": 1
     }
   ],
   "permissions": [

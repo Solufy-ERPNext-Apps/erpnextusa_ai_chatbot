@@ -10,7 +10,8 @@
     "session_id",
     "provider",
     "visitor_message",
-    "assistant_message"
+    "assistant_message",
+    "liked"
   ],
   "fields": [
     {
@@ -34,6 +35,13 @@
       "fieldname": "assistant_message",
       "label": "Assistant Message",
       "fieldtype": "Long Text"
+    },
+    {
+      "fieldname": "liked",
+      "label": "Liked",
+      "fieldtype": "Check",
+      "default": "0",
+      "read_only": 1
     }
   ],
   "permissions": [
