@@ -18,7 +18,12 @@ DEFAULT_CONTACT_PHONE = "+1 (848) 248-0021"
 def clean(value, limit=8000, preserve_lines=False):
     if not value:
         return ""
-    val = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", str(value), flags=re.DOTALL | re.IGNORECASE)
+    val = re.sub(
+        r"<(script|style)[^>]*>.*?</\1>",
+        "",
+        str(value),
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     val = re.sub(r"<[^>]*>", " ", val)
     if preserve_lines:
         lines = [re.sub(r"[ \t]+", " ", line).strip() for line in val.splitlines()]
@@ -47,6 +52,7 @@ def throttle(action, max_requests, seconds):
             pass
     ip = ip or "unknown"
     import hashlib
+
     token = hashlib.sha256(str(ip).encode()).hexdigest()[:24]
     key = f"eu_chatbot:{action}:{token}"
     redis = frappe.cache()
@@ -54,32 +60,215 @@ def throttle(action, max_requests, seconds):
     if count == 1:
         redis.expire(key, seconds)
     if count > max_requests:
-        frappe.throw(_("Too many requests. Please try again later."), frappe.ValidationError)
+        frappe.throw(
+            _("Too many requests. Please try again later."), frappe.ValidationError
+        )
 
 
 STOP_WORDS = {
-    "a", "about", "above", "after", "again", "against", "all", "also", "an", "and",
-    "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
-    "below", "between", "both", "but", "by", "can", "can't", "cannot", "could",
-    "couldn't", "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down",
-    "during", "each", "few", "for", "from", "further", "get", "gets", "getting",
-    "give", "gives", "giving", "good", "had", "hadn't", "has", "hasn't", "have",
-    "haven't", "having", "he", "he'd", "he'll", "he's", "help", "her", "here",
-    "here's", "hers", "herself", "him", "himself", "his", "how", "how's", "i",
-    "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's",
-    "its", "itself", "just", "know", "let's", "like", "make", "makes", "making",
-    "many", "me", "more", "most", "much", "mustn't", "my", "myself", "need",
-    "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought",
-    "our", "ours", "ourselves", "out", "over", "own", "please", "same", "say",
-    "says", "see", "shall", "shan't", "she", "she'd", "she'll", "she's", "should",
-    "shouldn't", "so", "some", "such", "tell", "than", "that", "that's", "the",
-    "their", "theirs", "them", "themselves", "then", "there", "there's", "these",
-    "they", "they'd", "they'll", "they're", "they've", "this", "those", "through",
-    "to", "too", "under", "until", "up", "use", "uses", "using", "very", "was",
-    "wasn't", "we", "we'd", "we'll", "we're", "we've", "were", "weren't", "what",
-    "what's", "when", "when's", "where", "where's", "which", "while", "who", "who's",
-    "whom", "why", "why's", "will", "with", "won't", "work", "works", "working",
-    "would", "wouldn't", "you", "you'd", "you'll", "you're", "you've", "your", "yours"
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "also",
+    "an",
+    "and",
+    "any",
+    "are",
+    "aren't",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "below",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "can't",
+    "cannot",
+    "could",
+    "couldn't",
+    "did",
+    "didn't",
+    "do",
+    "does",
+    "doesn't",
+    "doing",
+    "don't",
+    "down",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "further",
+    "get",
+    "gets",
+    "getting",
+    "give",
+    "gives",
+    "giving",
+    "good",
+    "had",
+    "hadn't",
+    "has",
+    "hasn't",
+    "have",
+    "haven't",
+    "having",
+    "he",
+    "he'd",
+    "he'll",
+    "he's",
+    "help",
+    "her",
+    "here",
+    "here's",
+    "hers",
+    "herself",
+    "him",
+    "himself",
+    "his",
+    "how",
+    "how's",
+    "i",
+    "i'd",
+    "i'll",
+    "i'm",
+    "i've",
+    "if",
+    "in",
+    "into",
+    "is",
+    "isn't",
+    "it",
+    "it's",
+    "its",
+    "itself",
+    "just",
+    "know",
+    "let's",
+    "like",
+    "make",
+    "makes",
+    "making",
+    "many",
+    "me",
+    "more",
+    "most",
+    "much",
+    "mustn't",
+    "my",
+    "myself",
+    "need",
+    "no",
+    "nor",
+    "not",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "ought",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "please",
+    "same",
+    "say",
+    "says",
+    "see",
+    "shall",
+    "shan't",
+    "she",
+    "she'd",
+    "she'll",
+    "she's",
+    "should",
+    "shouldn't",
+    "so",
+    "some",
+    "such",
+    "tell",
+    "than",
+    "that",
+    "that's",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "themselves",
+    "then",
+    "there",
+    "there's",
+    "these",
+    "they",
+    "they'd",
+    "they'll",
+    "they're",
+    "they've",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "use",
+    "uses",
+    "using",
+    "very",
+    "was",
+    "wasn't",
+    "we",
+    "we'd",
+    "we'll",
+    "we're",
+    "we've",
+    "were",
+    "weren't",
+    "what",
+    "what's",
+    "when",
+    "when's",
+    "where",
+    "where's",
+    "which",
+    "while",
+    "who",
+    "who's",
+    "whom",
+    "why",
+    "why's",
+    "will",
+    "with",
+    "won't",
+    "work",
+    "works",
+    "working",
+    "would",
+    "wouldn't",
+    "you",
+    "you'd",
+    "you'll",
+    "you're",
+    "you've",
+    "your",
+    "yours",
 }
 
 
@@ -163,7 +352,9 @@ def _knowledge_score(row, terms):
         score += 10 if word.search(fields["keywords"]) else 0
         score += 8 if word.search(fields["question"]) else 0
         score += 2 if word.search(fields["answer"]) else 0
-        if row.get("category") in ("Industry", "Service") and word.search(fields["title"]):
+        if row.get("category") in ("Industry", "Service") and word.search(
+            fields["title"]
+        ):
             score += 5
     return score + min(cint(row.get("likes")) * 0.5, 3)
 
@@ -171,16 +362,21 @@ def _knowledge_score(row, terms):
 def _knowledge_result(row, match_score=None):
     return {
         "title": clean(row.get("title"), 160),
-        "answer": clean(row.get("answer") or row.get("content"), 8000, preserve_lines=True),
+        "answer": clean(
+            row.get("answer") or row.get("content"), 8000, preserve_lines=True
+        ),
         "category": clean(row.get("category"), 140),
         "priority": cint(row.get("priority")),
         "likes": cint(row.get("likes")),
-        "match_score": float(match_score if match_score is not None else row.get("match_score") or 0),
+        "match_score": float(
+            match_score if match_score is not None else row.get("match_score") or 0
+        ),
     }
 
 
-def provider_reply(cfg, question, knowledge, requested_model=None):
+def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
     import time
+
     provider = cfg.active_provider
     if requested_model:
         rm = str(requested_model).lower()
@@ -194,7 +390,11 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
     timeout = min(90, max(5, cint(cfg.request_timeout) or 45))
     temperature = max(0, min(1, float(cfg.temperature or 0.3)))
     max_tokens = min(2000, max(100, cint(cfg.max_output_tokens) or 700))
-    context = "\n".join(f"- {r['title']}: {r['answer']}" for r in knowledge) if knowledge else ""
+    context = (
+        "\n".join(f"- {r['title']}: {r['answer']}" for r in knowledge)
+        if knowledge
+        else ""
+    )
     if knowledge and knowledge[0].get("category") == "Chat Feedback":
         learned_answer = knowledge[0].get("answer") or knowledge[0].get("content")
         if learned_answer:
@@ -224,10 +424,26 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
         "• For direct ERP & business queries: Answer authoritatively, helpfully, and concisely using the approved knowledge context.\n"
         "• Formatting: Use clean markdown, bold highlights, and friendly bullet points."
     )
+    if country:
+        instruction += (
+            f"\n\nVISITOR COUNTRY: {country}. Use relevant country terminology and approved "
+            "country-specific knowledge when available. Do not invent tax, legal, pricing, office, "
+            "partner, or compliance claims. Include a relevant approved source link when the knowledge provides one."
+        )
 
     is_greeting = question.lower().strip(" .!?,") in {
-        "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
-        "greetings", "howdy", "hola", "namaste", "what's up", "whats up"
+        "hi",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "greetings",
+        "howdy",
+        "hola",
+        "namaste",
+        "what's up",
+        "whats up",
     }
     if is_greeting:
         return (
@@ -237,37 +453,79 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
         )
 
     def _call_openai():
-        key = cfg.get_password("openai_api_key", raise_exception=False) or frappe.conf.get("openai_api_key")
-        if not key: raise ValueError("OpenAI key missing")
+        key = cfg.get_password(
+            "openai_api_key", raise_exception=False
+        ) or frappe.conf.get("openai_api_key")
+        if not key:
+            raise ValueError("OpenAI key missing")
         sys_msg = instruction + ("\nAPPROVED KNOWLEDGE:\n" + context if context else "")
-        messages = [{"role": "system", "content": sys_msg}, {"role": "user", "content": question}]
-        res = requests.post("https://api.openai.com/v1/chat/completions",
+        messages = [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": question},
+        ]
+        res = requests.post(
+            "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": "Bearer " + key},
-            json={"model": cfg.openai_model or "gpt-4o-mini", "messages": messages,
-                  "temperature": temperature, "max_tokens": max_tokens}, timeout=timeout)
+            json={
+                "model": cfg.openai_model or "gpt-4o-mini",
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+            timeout=timeout,
+        )
         if not res.ok:
             try:
                 err_msg = res.json().get("error", {}).get("message")
             except Exception:
                 err_msg = res.text
-            raise ValueError(f"OpenAI error ({res.status_code}): {err_msg or res.reason}")
+            raise ValueError(
+                f"OpenAI error ({res.status_code}): {err_msg or res.reason}"
+            )
         return res.json()["choices"][0]["message"]["content"]
 
     def _call_gemini():
-        key = cfg.get_password("gemini_api_key", raise_exception=False) or frappe.conf.get("gemini_api_key")
-        if not key: raise ValueError("Gemini key missing")
+        key = cfg.get_password(
+            "gemini_api_key", raise_exception=False
+        ) or frappe.conf.get("gemini_api_key")
+        if not key:
+            raise ValueError("Gemini key missing")
         configured_model = cfg.gemini_model or "gemini-3.5-flash-lite"
-        candidate_models = [configured_model, "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash"]
-        models_to_try = list(dict.fromkeys([m for m in candidate_models if m and re.fullmatch(r"[A-Za-z0-9._-]+", m)]))
+        candidate_models = [
+            configured_model,
+            "gemini-3.5-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-flash-latest",
+            "gemini-2.0-flash",
+        ]
+        models_to_try = list(
+            dict.fromkeys(
+                [
+                    m
+                    for m in candidate_models
+                    if m and re.fullmatch(r"[A-Za-z0-9._-]+", m)
+                ]
+            )
+        )
         last_error = None
         for m in models_to_try:
             try:
-                sys_text = instruction + ("\nAPPROVED KNOWLEDGE:\n" + context if context else "")
-                res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
+                sys_text = instruction + (
+                    "\nAPPROVED KNOWLEDGE:\n" + context if context else ""
+                )
+                res = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
                     headers={"x-goog-api-key": key},
-                    json={"systemInstruction": {"parts": [{"text": sys_text}]},
-                          "contents": [{"role": "user", "parts": [{"text": question}]}],
-                          "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens}}, timeout=min(timeout, 30))
+                    json={
+                        "systemInstruction": {"parts": [{"text": sys_text}]},
+                        "contents": [{"role": "user", "parts": [{"text": question}]}],
+                        "generationConfig": {
+                            "temperature": temperature,
+                            "maxOutputTokens": max_tokens,
+                        },
+                    },
+                    timeout=min(timeout, 30),
+                )
                 if res.ok:
                     parts = res.json()["candidates"][0]["content"]["parts"]
                     return "\n".join(p.get("text", "") for p in parts)
@@ -275,7 +533,9 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
                     err_msg = res.json().get("error", {}).get("message")
                 except Exception:
                     err_msg = res.text
-                last_error = ValueError(f"Gemini error ({res.status_code}) on {m}: {err_msg or res.reason}")
+                last_error = ValueError(
+                    f"Gemini error ({res.status_code}) on {m}: {err_msg or res.reason}"
+                )
             except requests.RequestException as e:
                 last_error = e
         if last_error:
@@ -284,11 +544,14 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
     def _call_ollama():
         base = (cfg.ollama_url or "http://127.0.0.1:11434").rstrip("/")
         parsed = urlparse(base)
-        if not ((parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost")) or parsed.scheme == "https"):
+        if not (
+            (parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost"))
+            or parsed.scheme == "https"
+        ):
             raise ValueError("Ollama URL must be local HTTP or remote HTTPS")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Invalid Ollama URL")
-        
+
         model = cfg.ollama_model or "llama3.2:1b"
 
         ollama_instruction = (
@@ -303,32 +566,43 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
             "• **POS & E-Commerce:** Omnichannel order routing via Shopify, Amazon, or POS.\n\n"
             "Keep your response strictly under 75 words, friendly, and directly ERPNext-focused."
         )
+        if country:
+            ollama_instruction += (
+                f"\nVisitor country: {country}. Use country-relevant approved context only; "
+                "do not invent tax, legal, pricing, or compliance claims."
+            )
         if context:
             compact_snippets = []
             for item in knowledge[:2]:
                 ans_text = clean(item.get("answer") or item.get("content") or "", 160)
                 if ans_text:
                     compact_snippets.append(f"• {item['title']}: {ans_text}")
-            ollama_instruction += f"\n\nRELEVANT CONTEXT:\n" + "\n".join(compact_snippets)
+            ollama_instruction += f"\n\nRELEVANT CONTEXT:\n" + "\n".join(
+                compact_snippets
+            )
 
         ollama_messages = [
             {"role": "system", "content": ollama_instruction},
-            {"role": "user", "content": question}
+            {"role": "user", "content": question},
         ]
 
         # Optimized CPU options: 4 threads, 1024 context, 80 tokens max generation
-        res = requests.post(base + "/api/chat", json={
-            "model": model,
-            "messages": ollama_messages,
-            "stream": False,
-            "keep_alive": "60m",
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 80,
-                "num_ctx": 1024,
-                "num_thread": 4
-            }
-        }, timeout=min(timeout, 45))
+        res = requests.post(
+            base + "/api/chat",
+            json={
+                "model": model,
+                "messages": ollama_messages,
+                "stream": False,
+                "keep_alive": "60m",
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 80,
+                    "num_ctx": 1024,
+                    "num_thread": 4,
+                },
+            },
+            timeout=min(timeout, 45),
+        )
         if res.ok:
             return res.json()["message"]["content"]
         raise ValueError(f"Ollama error: {res.text}")
@@ -337,7 +611,9 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
         try:
             return _call_openai()
         except Exception:
-            if frappe.conf.get("gemini_api_key") or cfg.get_password("gemini_api_key", raise_exception=False):
+            if frappe.conf.get("gemini_api_key") or cfg.get_password(
+                "gemini_api_key", raise_exception=False
+            ):
                 return _call_gemini()
             raise
     elif provider == "Gemini":
@@ -352,7 +628,9 @@ def provider_reply(cfg, question, knowledge, requested_model=None):
         try:
             return _call_ollama()
         except Exception:
-            if frappe.conf.get("gemini_api_key") or cfg.get_password("gemini_api_key", raise_exception=False):
+            if frappe.conf.get("gemini_api_key") or cfg.get_password(
+                "gemini_api_key", raise_exception=False
+            ):
                 try:
                     return _call_gemini()
                 except Exception:
@@ -372,15 +650,24 @@ def format_answer_links(text):
         parsed = urlparse(url)
         path = parsed.path.strip("/")
         slug = path.split("/")[-1] if path else "Solution"
-        friendly = slug.replace("erpnext-for-", "").replace("erpnext-", "").replace("-", " ").title()
-        friendly_label = f"ERPNext for {friendly}" if not friendly.lower().startswith("erpnext") else friendly
+        friendly = (
+            slug.replace("erpnext-for-", "")
+            .replace("erpnext-", "")
+            .replace("-", " ")
+            .title()
+        )
+        friendly_label = (
+            f"ERPNext for {friendly}"
+            if not friendly.lower().startswith("erpnext")
+            else friendly
+        )
         return f"👉 **[{friendly_label}](/{path})**"
 
     text = re.sub(
         r"(?:Explore the solution at|Read full case study|Read full guide at|Learn more at)[:\s]+(https?://(?:www\.)?erpnextusa\.com/([a-zA-Z0-9_\-\/]+))",
         _rep_labeled,
         text,
-        flags=re.IGNORECASE
+        flags=re.IGNORECASE,
     )
 
     # Transform any remaining bare erpnextusa.com URLs that are NOT preceded by ](
@@ -391,32 +678,189 @@ def format_answer_links(text):
         if not path:
             return "[ERPNext USA](/)"
         slug = path.split("/")[-1]
-        friendly = slug.replace("erpnext-for-", "").replace("erpnext-", "").replace("-", " ").title()
+        friendly = (
+            slug.replace("erpnext-for-", "")
+            .replace("erpnext-", "")
+            .replace("-", " ")
+            .title()
+        )
         return f"[👉 {friendly}](/{path})"
 
-    text = re.sub(r"(?<!\]\()(https?://(?:www\.)?erpnextusa\.com/([a-zA-Z0-9_\-\/]+))", _rep_bare, text)
+    text = re.sub(
+        r"(?<!\]\()(https?://(?:www\.)?erpnextusa\.com/([a-zA-Z0-9_\-\/]+))",
+        _rep_bare,
+        text,
+    )
     return text
 
 
 def detect_lead_intent(message, answer=""):
     combined = (str(message or "") + " " + str(answer or "")).lower()
     keywords = [
-        "quote", "estimate", "pricing", "cost", "implement", "proposal", "demo",
-        "contact", "hire", "consultation", "discovery", "talk to", "speak with",
-        "reach out", "call me", "get in touch", "custom app", "start project",
-        "services", "support", "help", "yes", "sure", "schedule", "need"
+        "quote",
+        "estimate",
+        "pricing",
+        "cost",
+        "implement",
+        "proposal",
+        "demo",
+        "contact",
+        "hire",
+        "consultation",
+        "discovery",
+        "talk to",
+        "speak with",
+        "reach out",
+        "call me",
+        "get in touch",
+        "custom app",
+        "start project",
+        "services",
+        "support",
+        "help",
+        "yes",
+        "sure",
+        "schedule",
+        "need",
     ]
     return any(k in combined for k in keywords)
+
+
+FOLLOW_UP_TOPICS = (
+    (
+        ("manufactur", "bom", "shop floor", "mrp", "work order", "routing"),
+        (
+            "How would ERPNext map our manufacturing workflow?",
+            "Which manufacturing data should we prepare before implementation?",
+        ),
+    ),
+    (
+        ("inventory", "stock", "warehouse", "barcode", "serial", "batch"),
+        (
+            "How can ERPNext improve our inventory accuracy?",
+            "Which warehouse and item details are needed to plan this setup?",
+        ),
+    ),
+    (
+        ("account", "finance", "invoice", "payment", "tax", "bookkeep"),
+        (
+            "How would ERPNext fit our accounting and invoicing process?",
+            "What financial data can Solufy migrate into ERPNext?",
+        ),
+    ),
+    (
+        ("crm", "sales", "lead", "customer", "pipeline"),
+        (
+            "How can ERPNext automate our sales and CRM workflow?",
+            "Which reports would help us track leads and customers?",
+        ),
+    ),
+    (
+        ("human resource", "payroll", "employee", "attendance", "leave"),
+        (
+            "How can ERPNext streamline our HR and payroll process?",
+            "Which employee records are required for migration?",
+        ),
+    ),
+    (
+        ("tea", "coffee", "recipe", "food", "beverage", "dairy", "cook", "bake"),
+        (
+            "How would ERPNext manage our recipes, batches, and expiry dates?",
+            "Which food manufacturing and quality checks can be automated?",
+        ),
+    ),
+    (
+        ("bottle", "mobile", "gadget", "product", "item", "hardware", "device"),
+        (
+            "How would ERPNext track our products, serial numbers, and barcodes?",
+            "Can our ecommerce channels be connected with ERPNext inventory?",
+        ),
+    ),
+    (
+        ("quote", "price", "cost", "pricing", "estimate", "budget"),
+        (
+            "What details do you need to prepare an implementation estimate?",
+            "Which factors affect the ERPNext project cost and timeline?",
+        ),
+    ),
+    (
+        ("implement", "setup", "rollout", "migration", "start"),
+        (
+            "What would the first phase of our ERPNext rollout include?",
+            "Which data and workflows should we prepare before migration?",
+        ),
+    ),
+    (
+        ("custom", "develop", "app", "workflow", "integration", "frappe", "api"),
+        (
+            "How would Solufy design this workflow in Frappe?",
+            "How can this customization remain safe during ERPNext upgrades?",
+        ),
+    ),
+    (
+        ("support", "sla", "maintain", "issue", "bug", "error"),
+        (
+            "How would Solufy investigate this issue in our ERPNext setup?",
+            "What ongoing support would fit our team and system?",
+        ),
+    ),
+)
+
+
+def build_follow_up_options(message, knowledge=None):
+    """Return next questions that reflect the visitor's current topic."""
+    text = clean(message, 1000).lower()
+    for keywords, questions in FOLLOW_UP_TOPICS:
+        if any(keyword in text for keyword in keywords):
+            return [*questions, "Contact Team"]
+
+    topic = _follow_up_topic(message, knowledge or [])
+    if topic:
+        return [
+            f"How could ERPNext support this requirement: {topic}?",
+            f"What would Solufy need to assess this process: {topic}?",
+            "Contact Team",
+        ]
+
+    return [
+        "Which ERPNext service is the best fit for our current needs?",
+        "What information should we share for an initial assessment?",
+        "Contact Team",
+    ]
+
+
+def _follow_up_topic(message, knowledge):
+    words = re.findall(r"[a-z0-9]+", clean(message, 300).lower())
+    meaningful = [word for word in words if word not in STOP_WORDS and len(word) > 2]
+    if meaningful:
+        return " ".join(meaningful[:4])
+
+    for item in knowledge:
+        title = clean(item.get("title"), 80).lower()
+        if title:
+            return title
+    return ""
 
 
 def is_consultant_request(message: str) -> bool:
     text = str(message or "").lower()
     phrases = (
-        "sales person", "salesperson", "sales representative", "sales rep",
-        "sales team", "contact sales", "talk to sales", "speak to sales",
-        "talk to a consultant", "speak to a consultant", "consultant profile",
-        "show consultants", "meet consultants", "erp consultant",
-        "consulting team", "consulting staff",
+        "sales person",
+        "salesperson",
+        "sales representative",
+        "sales rep",
+        "sales team",
+        "contact sales",
+        "talk to sales",
+        "speak to sales",
+        "talk to a consultant",
+        "speak to a consultant",
+        "consultant profile",
+        "show consultants",
+        "meet consultants",
+        "erp consultant",
+        "consulting team",
+        "consulting staff",
     )
     return any(phrase in text for phrase in phrases)
 
@@ -436,8 +880,14 @@ def get_public_consultants() -> list[dict]:
         return []
 
     fields = [
-        "full_name", "designation", "photo", "photo_alt_text",
-        "email", "phone", "whatsapp_number", "slug",
+        "full_name",
+        "designation",
+        "photo",
+        "photo_alt_text",
+        "email",
+        "phone",
+        "whatsapp_number",
+        "slug",
     ]
     rows = frappe.get_all(
         "Website Team Member",
@@ -451,9 +901,11 @@ def get_public_consultants() -> list[dict]:
             "name": clean(row.full_name, 140),
             "designation": clean(row.designation, 160) or "ERPNext Consultant",
             "photo": row.photo or "",
-            "photo_alt_text": clean(row.photo_alt_text, 160) or clean(row.full_name, 140),
+            "photo_alt_text": clean(row.photo_alt_text, 160)
+            or clean(row.full_name, 140),
             "email": clean(row.email, 140) or DEFAULT_CONTACT_EMAIL,
-            "phone": clean(row.phone or row.whatsapp_number, 40) or DEFAULT_CONTACT_PHONE,
+            "phone": clean(row.phone or row.whatsapp_number, 40)
+            or DEFAULT_CONTACT_PHONE,
             "profile_url": f"/team#{row.slug}",
         }
         for row in rows
@@ -461,18 +913,32 @@ def get_public_consultants() -> list[dict]:
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-def chat(message=None, session_id=None, model=None, **kwargs):
+def chat(message=None, session_id=None, model=None, country=None, **kwargs):
     throttle("chat", 60, 60)
     message = clean(message)
-    if not message: frappe.throw(_("Enter a message"))
+    if not message:
+        frappe.throw(_("Enter a message"))
     cfg = settings_enabled()
-    consultant_profiles = get_public_consultants() if is_consultant_request(message) else []
+    country = _visitor_country(country)
+    consultant_profiles = (
+        get_public_consultants() if is_consultant_request(message) else []
+    )
     if consultant_profiles:
         answer = "Here is our consulting team."
     else:
-        kb = retrieve(message, min(10, max(1, cint(cfg.max_knowledge_results) or 5)))
+        kb = _retrieve_for_country(
+            message,
+            country,
+            min(10, max(1, cint(cfg.max_knowledge_results) or 5)),
+        )
         try:
-            answer = provider_reply(cfg, message, kb, requested_model=model)
+            answer = provider_reply(
+                cfg,
+                message,
+                kb,
+                requested_model=model,
+                country=country,
+            )
         except Exception:
             frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Provider")
             # Graceful fallback ONLY if AI providers failed completely
@@ -489,9 +955,15 @@ def chat(message=None, session_id=None, model=None, **kwargs):
     answer = format_answer_links(answer)
     sid = clean(session_id, 100) if session_id else uuid.uuid4().hex
     try:
-        frappe.get_doc({"doctype": "Chatbot Conversation", "session_id": sid,
-            "visitor_message": message, "assistant_message": clean(answer, 8000),
-            "provider": cfg.active_provider}).insert(ignore_permissions=True)
+        frappe.get_doc(
+            {
+                "doctype": "Chatbot Conversation",
+                "session_id": sid,
+                "visitor_message": message,
+                "assistant_message": clean(answer, 8000),
+                "provider": cfg.active_provider,
+            }
+        ).insert(ignore_permissions=True)
     except Exception:
         frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Logging")
 
@@ -502,93 +974,75 @@ def chat(message=None, session_id=None, model=None, **kwargs):
         res_data["suggest_lead"] = False
         return res_data
 
-    # Contextual follow-up questions + one common option to contact the team on every chat
-    msg_low = (message or "").lower()
-
-    if any(k in msg_low for k in ["tea", "coffee", "recipe", "food", "beverage", "dairy", "cook", "bake"]):
-        lead_opts = [
-            "What ERPNext modules handle recipe BOMs & batch expiry?",
-            "How does Solufy automate food & beverage manufacturing?",
-            "Contact Team"
-        ]
-    elif any(k in msg_low for k in ["poem", "poetry", "rhyme", "song", "story", "joke", "fun"]):
-        lead_opts = [
-            "How does ERPNext manage creative projects & milestones?",
-            "Can Solufy build custom Frappe apps for unique business ideas?",
-            "Contact Team"
-        ]
-    elif any(k in msg_low for k in ["bottle", "mobile", "gadget", "product", "item", "hardware", "device"]):
-        lead_opts = [
-            "How does ERPNext track serialized inventory & barcodes?",
-            "How do Shopify & Amazon integrations work with ERPNext?",
-            "Contact Team"
-        ]
-    elif any(k in msg_low for k in ["manufactur", "bom", "shop floor", "mrp", "work order", "routing"]):
-        lead_opts = [
-            "What ERPNext modules manage BOM and shop floor routing?",
-            "How does Solufy handle data migration from legacy ERP?",
-            "Contact Team"
-        ]
-    elif any(k in msg_low for k in ["quote", "price", "cost", "pricing", "estimate", "budget"]):
-        lead_opts = [
-            "Get an implementation estimate",
-            "What factors determine ERPNext implementation cost & timeline?",
-            "Contact Team"
-        ]
-    elif any(k in msg_low for k in ["implement", "setup", "rollout", "migration", "start"]):
-        lead_opts = [
-            "What is the typical ERPNext rollout timeline with Solufy?",
-            "How do you guarantee US EST/PST business hours overlap?",
-            "Contact Team"
-        ]
-    elif any(k in msg_low for k in ["custom", "develop", "app", "workflow", "integration", "frappe"]):
-        lead_opts = [
-            "Can Solufy build custom Frappe apps and DocTypes for our team?",
-            "How do you prevent technical debt during future ERPNext upgrades?",
-            "Contact Team"
-        ]
-    elif any(k in msg_low for k in ["support", "sla", "maintain", "issue", "bug"]):
-        lead_opts = [
-            "What SLA response times and engineer coverage do you offer?",
-            "Can Solufy audit and optimize our existing ERPNext setup?",
-            "Contact Team"
-        ]
-    else:
-        lead_opts = [
-            "Which industries do you build ERPNext solutions for?",
-            "Can you review and improve our existing ERP system?",
-            "Contact Team"
-        ]
-
-    if "Contact Team" not in lead_opts and not any("contact" in o.lower() for o in lead_opts):
-        lead_opts.append("Contact Team")
-
     res_data["suggest_lead"] = True
     res_data["lead_prompt"] = "Related questions & next steps:"
-    res_data["lead_options"] = lead_opts
+    res_data["lead_options"] = build_follow_up_options(message, kb)
     return res_data
+
+
+def _visitor_country(country):
+    country = re.sub(r"[^A-Za-z .'-]", "", clean(country, 60)).strip()
+    if country:
+        return country
+    request = getattr(frappe, "request", None)
+    if request and getattr(request, "cookies", None):
+        return re.sub(
+            r"[^A-Za-z .'-]",
+            "",
+            clean(request.cookies.get("solufy_country"), 60),
+        ).strip()
+    return ""
+
+
+def _retrieve_for_country(message, country, limit):
+    knowledge = retrieve(message, limit)
+    if not country:
+        return knowledge
+
+    country_knowledge = retrieve(f"{message} {country}", limit)
+    merged = []
+    seen = set()
+    for item in [*country_knowledge, *knowledge]:
+        key = (item.get("title"), item.get("answer"))
+        if key not in seen:
+            seen.add(key)
+            merged.append(item)
+    return merged[:limit]
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def submit_lead(name=None, email=None, phone=None, message=None, consent=0):
     throttle("lead", 20, 3600)
     cfg = settings_enabled()
-    if not cint(consent): frappe.throw(_("Consent is required"))
-    name, email, phone, message = clean(name, 140), clean(email, 140), clean(phone, 40), clean(message)
+    if not cint(consent):
+        frappe.throw(_("Consent is required"))
+    name, email, phone, message = (
+        clean(name, 140),
+        clean(email, 140),
+        clean(phone, 40),
+        clean(message),
+    )
     if not name or not frappe.utils.validate_email_address(email, throw=False):
         frappe.throw(_("Enter a name and valid email"))
     if not frappe.db.exists("DocType", "Lead"):
         frappe.throw(_("ERPNext Lead is not installed"))
-    values = {"doctype": "Lead", "lead_name": name, "email_id": email, "mobile_no": phone}
+    values = {
+        "doctype": "Lead",
+        "lead_name": name,
+        "email_id": email,
+        "mobile_no": phone,
+    }
     if message:
         user = getattr(getattr(frappe, "session", None), "user", None)
         if not user or user == "Guest":
             user = "Administrator"
-        values["notes"] = [{
-            "note": frappe.utils.escape_html(message),
-            "added_by": user,
-            "added_on": frappe.utils.now(),
-        }]
+        values["notes"] = [
+            {
+                "note": frappe.utils.escape_html(message),
+                "added_by": user,
+                "added_on": frappe.utils.now(),
+            }
+        ]
     source = cfg.lead_source or "Website"
     if frappe.db.has_column("Lead", "source"):
         values["source"] = source
@@ -607,7 +1061,9 @@ def like_response(session_id=None, message=None, answer=None, liked=1):
     is_liked = cint(liked)
     conversation = _get_feedback_conversation(session_id, message, answer)
     if not conversation:
-        frappe.throw(_("The chat response could not be verified"), frappe.ValidationError)
+        frappe.throw(
+            _("The chat response could not be verified"), frappe.ValidationError
+        )
 
     conversation_table = frappe.qb.DocType("Chatbot Conversation")
     (
@@ -662,10 +1118,13 @@ def _sync_learned_response(message: str, answer: str, liked: int) -> str | None:
             ).run()
         return existing
 
-    terms = list(dict.fromkeys(
-        word for word in re.findall(r"[a-z0-9]{3,}", normalized_question)
-        if word not in STOP_WORDS
-    ))
+    terms = list(
+        dict.fromkeys(
+            word
+            for word in re.findall(r"[a-z0-9]{3,}", normalized_question)
+            if word not in STOP_WORDS
+        )
+    )
     values = {
         "title": clean(message, 140),
         "published": 1,
