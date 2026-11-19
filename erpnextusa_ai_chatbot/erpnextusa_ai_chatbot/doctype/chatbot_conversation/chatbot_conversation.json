@@ -8,6 +8,7 @@
   "engine": "InnoDB",
   "field_order": [
     "session_id",
+    "visitor_name",
     "provider",
     "visitor_message",
     "assistant_message",
@@ -17,6 +18,12 @@
     {
       "fieldname": "session_id",
       "label": "Session ID",
+      "fieldtype": "Data",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "visitor_name",
+      "label": "Visitor Name",
       "fieldtype": "Data",
       "in_list_view": 1
     },

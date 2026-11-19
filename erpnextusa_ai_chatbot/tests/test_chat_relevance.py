@@ -4,8 +4,10 @@ from unittest.mock import patch
 from erpnextusa_ai_chatbot.api import (
     _page_source_url,
     _prioritize_knowledge_results,
+    _remove_unrequested_greeting,
     _retrieve_for_country,
     company_summary_answer,
+    extract_visitor_name,
     is_consultant_request,
     is_company_summary_request,
     is_page_context_request,
@@ -116,3 +118,22 @@ class TestChatRelevance(TestCase):
 
         self.assertEqual(results, [])
         retrieve.assert_called_once_with("Now", 5)
+
+    def test_extract_visitor_name_from_intro(self):
+        self.assertEqual(extract_visitor_name("i am savan patel"), "Savan Patel")
+        self.assertEqual(extract_visitor_name("I'm Savan Patel"), "Savan Patel")
+        self.assertEqual(extract_visitor_name("my name is Savan"), "Savan")
+        self.assertEqual(extract_visitor_name("call me Savan Patel"), "Savan Patel")
+        self.assertEqual(extract_visitor_name("this is Savan"), "Savan")
+
+    def test_extract_visitor_name_ignores_non_names(self):
+        self.assertEqual(extract_visitor_name("I am looking for ERP software"), "")
+        self.assertEqual(extract_visitor_name("I am interested in Solufy"), "")
+        self.assertEqual(extract_visitor_name("What is ERPNext?"), "")
+
+    def test_remove_unrequested_greeting_preserves_named_greeting(self):
+        answer = "Hello Savan! It is fantastic to meet you."
+        self.assertEqual(
+            _remove_unrequested_greeting("i am savan patel", answer, visitor_name="Savan Patel"),
+            answer,
+        )

@@ -9,7 +9,10 @@ import requests
 from frappe import _
 from frappe.utils import cint
 
-from erpnextusa_ai_chatbot.setup_ollama import DEFAULT_OLLAMA_MODEL
+from erpnextusa_ai_chatbot.setup_ollama import (
+    DEFAULT_OLLAMA_MODEL,
+    FALLBACK_OLLAMA_MODEL,
+)
 
 SETTINGS = "Chatbot Settings"
 CONSULTANT_LIMIT = 4
@@ -438,8 +441,84 @@ def _is_greeting(message):
     }
 
 
-def _remove_unrequested_greeting(message, answer):
+def extract_visitor_name(message: str) -> str:
+    if not message:
+        return ""
+    text = clean(message, 500).strip()
+    patterns = [
+        r"\b(?:my name is|name is|i am|i'm|im|call me|this is|myself)\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,2})\b",
+    ]
+    non_names = {
+        "a", "an", "the", "here", "there", "asking", "looking", "interested", "trying",
+        "wondering", "just", "user", "visitor", "testing", "new", "curious", "not",
+        "good", "fine", "ready", "happy", "excited", "sorry", "sure", "having",
+        "planning", "thinking", "facing", "running", "using", "working", "building",
+        "seeking", "going", "getting", "searching", "calling", "writing", "hoping",
+    }
+    for pat in patterns:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            raw = match.group(1).strip(" .,!?")
+            words = raw.split()
+            if words and words[0].lower() not in non_names:
+                if len(words) == 1 and words[0].lower() in {
+                    "what", "who", "where", "how", "why", "when", "which", "can", "could", "should", "would", "is", "are"
+                }:
+                    continue
+                return " ".join(w.capitalize() for w in words)
+    return ""
+
+
+def get_session_visitor_name(session_id: str) -> str:
+    if not session_id:
+        return ""
+    cached = frappe.cache().get_value(f"eu_chatbot:visitor_name:{session_id}")
+    if cached:
+        return str(cached)
+    if frappe.db.has_column("Chatbot Conversation", "visitor_name"):
+        val = frappe.db.get_value(
+            "Chatbot Conversation",
+            filters={"session_id": session_id, "visitor_name": ["is", "set"]},
+            fieldname="visitor_name",
+            order_by="creation desc",
+        )
+        if val:
+            frappe.cache().set_value(f"eu_chatbot:visitor_name:{session_id}", val, expires_in_sec=86400)
+            return str(val)
+    return ""
+
+
+def set_session_visitor_name(session_id: str, name: str):
+    if not session_id or not name:
+        return
+    frappe.cache().set_value(f"eu_chatbot:visitor_name:{session_id}", name, expires_in_sec=86400)
+
+
+def get_session_history(session_id: str, limit: int = 6) -> list[dict]:
+    if not session_id:
+        return []
+    rows = frappe.get_all(
+        "Chatbot Conversation",
+        filters={"session_id": session_id},
+        fields=["visitor_message", "assistant_message"],
+        order_by="creation asc",
+        limit_page_length=limit,
+    )
+    history = []
+    for r in rows:
+        if r.get("visitor_message"):
+            history.append({"role": "user", "content": clean(r.visitor_message, 1000)})
+        if r.get("assistant_message"):
+            history.append({"role": "assistant", "content": clean(r.assistant_message, 1000)})
+    return history
+
+
+def _remove_unrequested_greeting(message, answer, visitor_name=""):
     if _is_greeting(message):
+        return answer
+    if visitor_name and visitor_name.lower() in (answer or "").lower()[:80]:
+        return answer
+    if any(phrase in message.lower() for phrase in ("my name", "i am", "i'm", "myself", "call me")):
         return answer
     return re.sub(
         r"^(?:hello|hi|hey)(?:\s+there)?[!,.:\s-]*",
@@ -450,7 +529,15 @@ def _remove_unrequested_greeting(message, answer):
     ).lstrip()
 
 
-def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
+def provider_reply(
+    cfg,
+    question,
+    knowledge,
+    requested_model=None,
+    country="",
+    history=None,
+    visitor_name="",
+):
     import time
 
     provider = cfg.active_provider
@@ -464,7 +551,7 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
             provider = "OpenAI"
 
     timeout = min(90, max(5, cint(cfg.request_timeout) or 45))
-    temperature = max(0, min(1, float(cfg.temperature or 0.3)))
+    temperature = max(0, min(1, float(cfg.temperature or 0.45)))
     max_tokens = min(2000, max(100, cint(cfg.max_output_tokens) or 700))
     context = (
         "\n".join(f"- {r['title']}: {r['answer']}" for r in knowledge)
@@ -475,22 +562,25 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
         learned_answer = knowledge[0].get("answer") or knowledge[0].get("content")
         if learned_answer:
             return learned_answer
+
     instruction = (
-        "You are the official AI Assistant for ERPNext USA. "
-        "Explain the approved website content clearly and in plain language.\n\n"
-        "RESPONSE RULES:\n"
-        "• APPROVED KNOWLEDGE is the only source for factual claims. Never add facts from general model knowledge or memory.\n"
-        "• If APPROVED KNOWLEDGE does not answer the question, say that the information is not available in the published website knowledge.\n"
-        "• Tone: Enthusiastic, witty, friendly, and charmingly passionate about ERPNext and Frappe!\n"
-        "• Answer the user's actual question. Do not reuse an unrelated industry or module answer.\n"
-        "• Limit the scope to the supplied published ERPNext USA website knowledge.\n"
-        "• Never write or generate source code, scripts, commands, formulas, or implementation snippets.\n"
-        "• Do not recommend configurations, settings, custom fields, workflows, integrations, architecture, or implementation ideas.\n"
-        "• If asked for code or configuration advice, politely state that you can explain the relevant standard Frappe or ERPNext concept, then give only that explanation.\n"
-        "• If a question is unrelated to Frappe, ERPNext, or Solufy, say that your scope is Frappe and ERPNext knowledge and ask for a related question.\n"
-        "• Keep answers concise and vary the wording to suit the question without changing the approved facts.\n"
-        "• Formatting: Use clean markdown, bold highlights, and friendly bullet points."
+        "You are the official AI consultant for Solufy and ERPNext USA (https://erpnextusa.com/). "
+        "Talk like a warm, helpful, friendly human being in a natural conversational tone. "
+        "Never give dry, robotic, or overly stiff textbook answers.\n\n"
+        "CONVERSATIONAL GUIDELINES:\n"
+        "• Be welcoming, courteous, and genuinely passionate about helping businesses succeed with ERPNext and Frappe.\n"
+        "• If you know the visitor's name or if they introduce themselves, greet and address them warmly by name.\n"
+        "• APPROVED KNOWLEDGE is your factual foundation for ERPNext, Frappe, and Solufy services. Blend this knowledge naturally into your conversational answers instead of just copying raw text.\n"
+        "• If APPROVED KNOWLEDGE does not contain the answer, politely let them know that the specific detail is not available on the website, and invite them to connect with Solufy's consulting team.\n"
+        "• Never write or generate raw source code, scripts, commands, formulas, or implementation snippets.\n"
+        "• Do not recommend unvetted custom configurations, custom fields, or architecture; explain standard Frappe/ERPNext concepts and features conceptually.\n"
+        "• If a question is unrelated to Frappe, ERPNext, or business operations, politely and warmly steer the conversation back to how ERPNext or Solufy can help their business.\n"
+        "• Keep answers concise, clear, and easy to read using clean markdown and friendly bullet points."
     )
+    if visitor_name:
+        instruction += (
+            f"\n\nVISITOR NAME: {visitor_name}. Greet them and address them warmly by name."
+        )
     if country:
         instruction += (
             f"\n\nVISITOR COUNTRY: {country}. Use relevant country terminology and approved "
@@ -498,12 +588,12 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
             "partner, or compliance claims. Include a relevant approved source link when the knowledge provides one."
         )
 
-    is_greeting = _is_greeting(question)
-    if is_greeting:
+    if _is_greeting(question):
+        name_part = f" {visitor_name}" if visitor_name else ""
         return (
-            "Hello! I am your AI ERP Assistant for **ERPNext USA** (https://erpnextusa.com/) and **Solufy** (https://www.solufyerp.com/).\n\n"
-            "I can explain Frappe, ERPNext, their standard modules, and Solufy's approved services. "
-            "I do not provide code or configuration recommendations. What would you like to learn?"
+            f"Hello{name_part}! 😊 It's wonderful to connect with you! I'm your AI consultant for "
+            "**ERPNext USA** (https://erpnextusa.com/) and **Solufy** (https://www.solufyerp.com/).\n\n"
+            "How can I help you today? I'd love to tell you more about ERPNext, Frappe, or our implementation and consulting services."
         )
 
     def _call_openai():
@@ -512,11 +602,11 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
         ) or frappe.conf.get("openai_api_key")
         if not key:
             raise ValueError("OpenAI key missing")
-        sys_msg = instruction + ("\nAPPROVED KNOWLEDGE:\n" + context if context else "")
-        messages = [
-            {"role": "system", "content": sys_msg},
-            {"role": "user", "content": question},
-        ]
+        sys_msg = instruction + ("\n\nAPPROVED KNOWLEDGE:\n" + context if context else "")
+        messages = [{"role": "system", "content": sys_msg}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": question})
         res = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": "Bearer " + key},
@@ -565,14 +655,20 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
         for m in models_to_try:
             try:
                 sys_text = instruction + (
-                    "\nAPPROVED KNOWLEDGE:\n" + context if context else ""
+                    "\n\nAPPROVED KNOWLEDGE:\n" + context if context else ""
                 )
+                contents = []
+                if history:
+                    for h in history:
+                        role = "user" if h.get("role") == "user" else "model"
+                        contents.append({"role": role, "parts": [{"text": h.get("content") or ""}]})
+                contents.append({"role": "user", "parts": [{"text": question}]})
                 res = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
                     headers={"x-goog-api-key": key},
                     json={
                         "systemInstruction": {"parts": [{"text": sys_text}]},
-                        "contents": [{"role": "user", "parts": [{"text": question}]}],
+                        "contents": contents,
                         "generationConfig": {
                             "temperature": temperature,
                             "maxOutputTokens": max_tokens,
@@ -606,18 +702,24 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Invalid Ollama URL")
 
-        model = cfg.ollama_model or DEFAULT_OLLAMA_MODEL
+        configured_model = (cfg.ollama_model or DEFAULT_OLLAMA_MODEL).strip()
+        models_to_try = [configured_model]
+        if FALLBACK_OLLAMA_MODEL not in models_to_try:
+            models_to_try.append(FALLBACK_OLLAMA_MODEL)
 
         ollama_instruction = (
-            "You are the official AI assistant for Solufy and ERPNext USA. "
-            "Give clear, accurate knowledge about Frappe, ERPNext, their standard modules, and approved Solufy services.\n"
-            "Answer the user's exact question and do not repeat an unrelated answer. "
-            "Never generate source code, scripts, commands, formulas, or implementation snippets. "
-            "Do not suggest configurations, settings, custom fields, workflows, integrations, architecture, or implementation ideas. "
-            "When asked for code or configuration help, politely offer only a factual explanation of the relevant standard concept. "
-            "For unrelated questions, state that your scope is Frappe and ERPNext knowledge. "
-            "Keep the answer friendly, specific, and under 140 words."
+            "You are the official AI consultant for Solufy and ERPNext USA. "
+            "Talk like a warm, helpful, friendly human being in a natural conversational tone. "
+            "Never give dry, robotic, or overly stiff textbook answers.\n"
+            "If you know the visitor's name, greet and address them warmly by name.\n"
+            "Approved website knowledge is your foundation for facts about Frappe, ERPNext, standard modules, and Solufy's services. "
+            "Explain them conversationally rather than just dumping raw text.\n"
+            "Never write or generate raw source code, scripts, commands, or formulas. "
+            "Do not suggest custom unvetted configurations or workflows; explain standard Frappe/ERPNext concepts conceptually.\n"
+            "Keep the answer friendly, engaging, and concise (under 160 words)."
         )
+        if visitor_name:
+            ollama_instruction += f"\nVISITOR NAME: {visitor_name}. Greet them and refer to them naturally by name."
         if country:
             ollama_instruction += (
                 f"\nVisitor country: {country}. Use country-relevant approved context only; "
@@ -625,40 +727,53 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
             )
         if context:
             compact_snippets = []
-            for item in knowledge[:2]:
-                ans_text = clean(item.get("answer") or item.get("content") or "", 160)
+            for item in knowledge[:3]:
+                ans_text = clean(item.get("answer") or item.get("content") or "", 200)
                 if ans_text:
                     compact_snippets.append(f"• {item['title']}: {ans_text}")
-            ollama_instruction += f"\n\nRELEVANT CONTEXT:\n" + "\n".join(
-                compact_snippets
-            )
+            if compact_snippets:
+                ollama_instruction += "\n\nRELEVANT APPROVED KNOWLEDGE:\n" + "\n".join(
+                    compact_snippets
+                )
 
         ollama_messages = [
             {"role": "system", "content": ollama_instruction},
-            {"role": "user", "content": question},
         ]
+        if history:
+            ollama_messages.extend(history)
+        ollama_messages.append({"role": "user", "content": question})
 
-        # Keep enough context and output space for distinct, question-specific answers.
-        res = requests.post(
-            base + "/api/chat",
-            json={
-                "model": model,
-                "messages": ollama_messages,
-                "stream": False,
-                "think": True,
-                "keep_alive": "60m",
-                "options": {
-                    "temperature": 0.2,
-                    "num_predict": 768,
-                    "num_ctx": 4096,
-                    "num_thread": 4,
-                },
-            },
-            timeout=max(timeout, 180),
-        )
-        if res.ok:
-            return res.json()["message"]["content"]
-        raise ValueError(f"Ollama error: {res.text}")
+        last_ollama_err = None
+        for m in models_to_try:
+            try:
+                m_timeout = min(timeout, 35) if m == configured_model and len(models_to_try) > 1 else max(timeout, 60)
+                res = requests.post(
+                    base + "/api/chat",
+                    json={
+                        "model": m,
+                        "messages": ollama_messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.45,
+                            "num_predict": 350,
+                            "num_ctx": 4096,
+                            "num_thread": 4,
+                        },
+                    },
+                    timeout=m_timeout,
+                )
+                if res.ok:
+                    msg = res.json().get("message", {})
+                    content = msg.get("content") or ""
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                    if content:
+                        return content
+                last_ollama_err = ValueError(f"Ollama error on {m}: {res.text}")
+            except Exception as e:
+                last_ollama_err = e
+
+        if last_ollama_err:
+            raise last_ollama_err
 
     if provider == "OpenAI":
         try:
@@ -1147,6 +1262,17 @@ def chat(
     if not message:
         frappe.throw(_("Enter a message"))
     cfg = settings_enabled()
+    sid = clean(session_id, 100) if session_id else uuid.uuid4().hex
+
+    # Detect and persist visitor name for this session
+    detected_name = extract_visitor_name(message)
+    if detected_name:
+        set_session_visitor_name(sid, detected_name)
+    visitor_name = detected_name or get_session_visitor_name(sid)
+
+    # Retrieve prior conversation turns for multi-turn conversational context
+    history = get_session_history(sid, limit=6)
+
     country = _visitor_country(country)
     kb = []
     answer = ""
@@ -1158,45 +1284,52 @@ def chat(
         answer = "Here is Solufy's consulting team."
     elif is_company_summary_request(message):
         answer = company_summary_answer()
-    elif _is_greeting(message):
-        answer = (
-            "Hello! I can help with information published on ERPNext USA about "
-            "ERPNext and Frappe. What would you like to know?"
-        )
+    elif page_context:
+        kb = get_page_knowledge(page)
+        if kb:
+            answer = summarize_page_answer(kb[0].get("answer") or "")
+        else:
+            answer = page_metadata_answer(page_title, page_heading, page_description)
     else:
         limit = min(10, max(1, cint(cfg.max_knowledge_results) or 5))
-        kb = get_page_knowledge(page) if page_context else []
-        if page_context and kb:
-            answer = summarize_page_answer(kb[0].get("answer") or "")
-        elif page_context:
-            answer = page_metadata_answer(
-                page_title, page_heading, page_description
+        kb = _retrieve_for_country(message, country, limit)
+        try:
+            answer = provider_reply(
+                cfg,
+                message,
+                kb,
+                requested_model=model,
+                country=country,
+                history=history,
+                visitor_name=visitor_name,
             )
-        else:
-            kb = _retrieve_for_country(message, country, limit)
-            answer = canonical_knowledge_answer(message, kb)
-    if not answer and kb:
-        answer = kb[0].get("answer") or kb[0].get("content") or ""
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Provider")
+            if kb:
+                answer = kb[0].get("answer") or kb[0].get("content") or ""
+
     if not answer:
+        name_greeting = f" {visitor_name}" if visitor_name else ""
         answer = (
-            "I can help with Solufy, ERPNext, Frappe, services, industries, case studies, "
-            "and other published ERPNext USA website content. I could not match that "
-            "message to this knowledge, so please ask a related question."
+            f"Hello{name_greeting}! 😊 I'm here to help with information about ERPNext, Frappe, and Solufy's "
+            "consulting and implementation services. What would you like to know?"
         )
 
-    answer = _remove_unrequested_greeting(message, answer)
+    answer = _remove_unrequested_greeting(message, answer, visitor_name=visitor_name)
     answer = format_answer_links(answer)
-    sid = clean(session_id, 100) if session_id else uuid.uuid4().hex
+
+    doc_data = {
+        "doctype": "Chatbot Conversation",
+        "session_id": sid,
+        "visitor_message": message,
+        "assistant_message": clean(answer, 8000),
+        "provider": cfg.active_provider,
+    }
+    if visitor_name and frappe.db.has_column("Chatbot Conversation", "visitor_name"):
+        doc_data["visitor_name"] = visitor_name
+
     try:
-        frappe.get_doc(
-            {
-                "doctype": "Chatbot Conversation",
-                "session_id": sid,
-                "visitor_message": message,
-                "assistant_message": clean(answer, 8000),
-                "provider": cfg.active_provider,
-            }
-        ).insert(ignore_permissions=True)
+        frappe.get_doc(doc_data).insert(ignore_permissions=True)
     except Exception:
         frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Logging")
 
