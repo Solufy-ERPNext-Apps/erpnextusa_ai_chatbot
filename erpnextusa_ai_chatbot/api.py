@@ -98,6 +98,7 @@ STOP_WORDS = {
     "cannot",
     "could",
     "couldn't",
+    "company",
     "did",
     "didn't",
     "do",
@@ -203,7 +204,12 @@ STOP_WORDS = {
     "shouldn't",
     "so",
     "some",
+    "solufy",
     "such",
+    "summarize",
+    "summarized",
+    "summary",
+    "summurized",
     "tell",
     "than",
     "that",
@@ -276,6 +282,7 @@ STOP_WORDS = {
 
 def retrieve(question, limit=5):
     knowledge = frappe.qb.DocType("Chatbot Knowledge")
+    question = _normalize_search_question(question)
     normalized_question = " ".join(question.lower().split())
     learned = (
         frappe.qb.from_(knowledge)
@@ -337,7 +344,44 @@ def retrieve(question, limit=5):
         key=lambda row: (row["match_score"], row["priority"]),
         reverse=True,
     )
-    return [row for row in ranked if row["match_score"] >= 4][:limit]
+    relevant = [row for row in ranked if row["match_score"] >= 4]
+    return _prioritize_knowledge_results(question, relevant)[:limit]
+
+
+def _normalize_search_question(question: str) -> str:
+    text = clean(question, 1000).lower()
+    corrections = {
+        "chemicle": "chemical",
+        "summurized": "summarized",
+        "takel": "tackle",
+    }
+    for typo, correction in corrections.items():
+        text = re.sub(rf"\b{typo}\b", correction, text)
+    return text
+
+
+def _prioritize_knowledge_results(question: str, results: list[dict]) -> list[dict]:
+    words = set(re.findall(r"[a-z0-9]+", question.lower()))
+    wants_article = bool(words & {"article", "blog", "guide", "insight", "read"})
+    if wants_article:
+        preferred_categories = {"Blog"}
+    elif words & {"team", "consultant", "consultants", "staff", "person", "people"}:
+        preferred_categories = {"Team"}
+    elif words & {"industry", "industries", "manufacturing", "chemical"}:
+        preferred_categories = {"Industry"}
+    else:
+        preferred_categories = {"Service", "Industry", "Team", "Case Study"}
+
+    return sorted(
+        results,
+        key=lambda row: (
+            row.get("category") in preferred_categories,
+            row.get("category") != "Blog" if not wants_article else True,
+            row.get("match_score", 0),
+            row.get("priority", 0),
+        ),
+        reverse=True,
+    )
 
 
 def _knowledge_score(row, terms):
@@ -987,8 +1031,117 @@ def get_public_consultants() -> list[dict]:
     ]
 
 
+def is_page_context_request(message: str) -> bool:
+    text = clean(message, 500).lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "this page",
+            "current page",
+            "summarize page",
+            "summarize the page",
+            "page summary",
+            "page summarized",
+        )
+    )
+
+
+def is_company_summary_request(message: str) -> bool:
+    text = clean(message, 500).lower()
+    asks_for_summary = any(stem in text for stem in ("summar", "summur"))
+    asks_about_solufy = "solufy" in text or "company" in text
+    return asks_for_summary and asks_about_solufy
+
+
+def company_summary_answer() -> str:
+    return (
+        "**Solufy is an ERPNext and Frappe consulting and implementation team.**\n\n"
+        "It helps businesses plan, implement, customize, integrate, and support ERPNext "
+        "around their operating workflows, with working-hour overlap for US businesses.\n\n"
+        "👉 [Learn more about Solufy](/about)"
+    )
+
+
+def get_page_knowledge(page: str) -> list[dict]:
+    source_url = _page_source_url(page)
+    if not source_url:
+        return []
+
+    rows = frappe.get_all(
+        "Chatbot Knowledge",
+        filters={"published": 1, "source_url": source_url},
+        fields=[
+            "title",
+            "answer",
+            "content",
+            "category",
+            "keywords",
+            "question",
+            "priority",
+            "likes",
+        ],
+        limit_page_length=1,
+    )
+    return [_knowledge_result(rows[0], match_score=1000)] if rows else []
+
+
+def _page_source_url(page: str) -> str:
+    path = urlparse(clean(page, 500)).path.strip("/")
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        return ""
+
+    source_doctype = {
+        "industries": "Website Industry",
+        "services": "Website Service",
+        "case-studies": "Case Study",
+        "blog": "Blog Post",
+    }.get(parts[0])
+    if not source_doctype:
+        return ""
+    return f"auto:{source_doctype}:{parts[-1]}"[:140]
+
+
+def summarize_page_answer(answer: str) -> str:
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", answer) if block.strip()]
+    if len(blocks) <= 3:
+        return answer
+
+    summary = blocks[:3]
+    if re.search(r"\[[^\]]+\]\([^)]+\)", blocks[-1]):
+        summary.append(blocks[-1])
+    return "\n\n".join(summary)
+
+
+def page_metadata_answer(title: str, heading: str, description: str) -> str:
+    title = clean(title, 200)
+    heading = clean(heading, 300)
+    description = clean(description, 700)
+    if not any((title, heading, description)):
+        return (
+            "I cannot identify enough published content on this page to summarize it."
+        )
+
+    blocks = [f"**{heading or title}**"]
+    if description:
+        blocks.append(description)
+    elif title and heading and title != heading:
+        blocks.append(title)
+    return "\n\n".join(blocks)
+
+
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-def chat(message=None, session_id=None, model=None, country=None, **kwargs):
+def chat(
+    message=None,
+    session_id=None,
+    model=None,
+    country=None,
+    page=None,
+    page_title=None,
+    page_heading=None,
+    page_description=None,
+    **kwargs,
+):
     throttle("chat", 60, 60)
     message = clean(message)
     if not message:
@@ -997,24 +1150,38 @@ def chat(message=None, session_id=None, model=None, country=None, **kwargs):
     country = _visitor_country(country)
     kb = []
     answer = ""
-    if _is_greeting(message):
+    page_context = is_page_context_request(message)
+    consultant_profiles = (
+        get_public_consultants() if is_consultant_request(message) else []
+    )
+    if consultant_profiles:
+        answer = "Here is Solufy's consulting team."
+    elif is_company_summary_request(message):
+        answer = company_summary_answer()
+    elif _is_greeting(message):
         answer = (
             "Hello! I can help with information published on ERPNext USA about "
             "ERPNext and Frappe. What would you like to know?"
         )
     else:
-        kb = _retrieve_for_country(
-            message,
-            country,
-            min(10, max(1, cint(cfg.max_knowledge_results) or 5)),
-        )
-        answer = canonical_knowledge_answer(message, kb)
+        limit = min(10, max(1, cint(cfg.max_knowledge_results) or 5))
+        kb = get_page_knowledge(page) if page_context else []
+        if page_context and kb:
+            answer = summarize_page_answer(kb[0].get("answer") or "")
+        elif page_context:
+            answer = page_metadata_answer(
+                page_title, page_heading, page_description
+            )
+        else:
+            kb = _retrieve_for_country(message, country, limit)
+            answer = canonical_knowledge_answer(message, kb)
     if not answer and kb:
         answer = kb[0].get("answer") or kb[0].get("content") or ""
     if not answer:
         answer = (
-            "I could not find that information in the published ERPNext USA website "
-            "knowledge yet. Please ask about content available on the website."
+            "I can help with Solufy, ERPNext, Frappe, services, industries, case studies, "
+            "and other published ERPNext USA website content. I could not match that "
+            "message to this knowledge, so please ask a related question."
         )
 
     answer = _remove_unrequested_greeting(message, answer)
@@ -1034,6 +1201,12 @@ def chat(message=None, session_id=None, model=None, country=None, **kwargs):
         frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Logging")
 
     res_data = {"answer": answer, "session_id": sid}
+    if consultant_profiles:
+        res_data["consultant_profiles"] = consultant_profiles
+        res_data["consultant_batch_size"] = CONSULTANT_LIMIT
+        res_data["suggest_lead"] = False
+        return res_data
+
     res_data["suggest_lead"] = False
     res_data["lead_prompt"] = "Related website knowledge:"
     res_data["lead_options"] = build_follow_up_options(message, kb)
@@ -1056,13 +1229,16 @@ def _visitor_country(country):
 
 def _retrieve_for_country(message, country, limit):
     knowledge = retrieve(message, limit)
-    if not country:
+    if not country or not knowledge:
         return knowledge
 
     country_knowledge = retrieve(f"{message} {country}", limit)
     merged = []
     seen = set()
-    for item in [*country_knowledge, *knowledge]:
+    # The visitor's question is the primary signal. Country enrichment must not
+    # outrank a relevant result merely because a company or article contains the
+    # country name.
+    for item in [*knowledge, *country_knowledge]:
         key = (item.get("title"), item.get("answer"))
         if key not in seen:
             seen.add(key)
