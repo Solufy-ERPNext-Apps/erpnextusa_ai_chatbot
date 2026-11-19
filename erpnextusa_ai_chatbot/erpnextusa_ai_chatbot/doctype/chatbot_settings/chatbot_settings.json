@@ -70,7 +70,7 @@
       "fieldname": "ollama_model",
       "label": "Ollama Model",
       "fieldtype": "Data",
-      "default": "llama3.2:1b"
+      "default": "qwen3-vl:4b-thinking"
     },
     {
       "fieldname": "temperature",

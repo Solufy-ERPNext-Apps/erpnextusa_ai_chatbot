@@ -35,3 +35,7 @@ doc_events = {
     },
 }
 
+scheduler_events = {
+    "daily": ["erpnextusa_ai_chatbot.sync_knowledge.sync_all"],
+}
+

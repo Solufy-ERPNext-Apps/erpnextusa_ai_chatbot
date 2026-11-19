@@ -1,6 +1,18 @@
+import html
 import re
 import frappe
 from frappe.utils import strip_html
+
+
+INTRODUCTION_TITLES = {"What ERPNext Is", "What the Frappe Framework Is"}
+WEBSITE_SOURCE_DOCTYPES = (
+    "Website Service",
+    "Website Industry",
+    "Case Study",
+    "Website Team Member",
+    "Blog Post",
+)
+PUBLIC_WEBSITE_URL = "https://www.erpnextusa.com"
 
 
 def clean_text(html_or_text, max_len=1800):
@@ -9,9 +21,23 @@ def clean_text(html_or_text, max_len=1800):
     s = str(html_or_text)
     # Ensure block tags have spacing so words across paragraphs/list items don't merge
     s = re.sub(r"</(?:p|div|li|h[1-6]|tr|br\s*/?)>", " ", s, flags=re.IGNORECASE)
-    text = strip_html(s)
+    text = html.unescape(strip_html(s))
     text = re.sub(r"\s+", " ", text).strip()
     return text[:max_len]
+
+
+def complete_excerpt(html_or_text, max_len=700):
+    text = clean_text(html_or_text, max_len * 3)
+    if len(text) <= max_len:
+        return text
+
+    excerpt = text[: max_len + 1]
+    sentence_end = max(excerpt.rfind(". "), excerpt.rfind("! "), excerpt.rfind("? "))
+    if sentence_end >= 120:
+        return excerpt[: sentence_end + 1]
+
+    word_end = excerpt.rfind(" ", 0, max_len)
+    return f"{excerpt[:word_end].rstrip(' ,;:-')}." if word_end > 0 else ""
 
 
 def upsert_knowledge(source_key, data):
@@ -212,17 +238,21 @@ def sync_blog_post(doc, method=None):
     source_key = f"auto:Blog Post:{doc.name}"[:140]
     title = doc.title or doc.name
     category = doc.blog_category or "Insights"
-    intro = clean_text(doc.blog_intro or doc.meta_description or "")
-    if not intro:
-        body = doc.content_md or doc.content or doc.content_html or ""
-        intro = clean_text(body, 400)
+    body = doc.content_md or doc.content or doc.content_html or ""
+    intro_source = doc.blog_intro or doc.meta_description or ""
+    intro = clean_text(intro_source)
+    if not re.search(r"[.!?]$", intro):
+        intro_source = body or intro_source
+    intro = complete_excerpt(intro_source)
 
     parts = [f"**Article: {title} ({category})**"]
     if intro:
         parts.append(intro)
     
     route = getattr(doc, "route", None) or doc.name
-    parts.append(f"👉 [Read Full Guide: {title}](/{route.lstrip('/')})")
+    public_url = f"{PUBLIC_WEBSITE_URL}/{route.lstrip('/')}"
+    parts.append(f"For more information, read the full article:")
+    parts.append(f"👉 [Read Full Guide: {title}]({public_url})")
 
     answer = "\n\n".join(parts)
     keywords = f"{title}, {category}, {doc.blogger or ''}, blog, article, erpnext guide"
@@ -243,7 +273,7 @@ def sync_blog_post(doc, method=None):
 # -------------------------------------------------------------------------
 
 def sync_all():
-    """Sync all existing Services, Industries, Case Studies, Team Members, and Blogs into Chatbot Knowledge."""
+    """Reconcile chatbot knowledge with the current website records."""
     counts = {"Service": 0, "Industry": 0, "Case Study": 0, "Team": 0, "Blog": 0}
 
     # 1. Services
@@ -281,9 +311,35 @@ def sync_all():
             if res in ("created", "updated"):
                 counts["Blog"] += 1
 
-    frappe.db.commit()
+    counts["Removed"] = prune_non_website_knowledge()
     print("Bulk Knowledge Sync Completed:")
     for k, v in counts.items():
         print(f"  • {k}: {v} synced")
     return counts
+
+
+def prune_non_website_knowledge():
+    """Remove stale or generated knowledge that is not backed by this website."""
+    allowed_sources = set()
+    for doctype in WEBSITE_SOURCE_DOCTYPES:
+        if not frappe.db.exists("DocType", doctype):
+            continue
+        allowed_sources.update(
+            f"auto:{doctype}:{name}"[:140]
+            for name in frappe.db.get_all(doctype, pluck="name")
+        )
+
+    removed = 0
+    rows = frappe.get_all(
+        "Chatbot Knowledge",
+        fields=["name", "title", "source_url"],
+        limit_page_length=10000,
+    )
+    for row in rows:
+        is_introduction = row.title in INTRODUCTION_TITLES
+        is_current_website_source = row.source_url in allowed_sources
+        if not is_introduction and not is_current_website_source:
+            frappe.delete_doc("Chatbot Knowledge", row.name, ignore_permissions=True)
+            removed += 1
+    return removed
 

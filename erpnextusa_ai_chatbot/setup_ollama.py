@@ -7,7 +7,10 @@ import subprocess
 import requests
 import frappe
 
-DEFAULT_OLLAMA_MODEL = "llama3.2:1b"
+DEFAULT_OLLAMA_MODEL = "qwen3-vl:4b-thinking"
+FALLBACK_OLLAMA_MODEL = "llama3.2:1b"
+REQUIRED_OLLAMA_MODELS = (DEFAULT_OLLAMA_MODEL, FALLBACK_OLLAMA_MODEL)
+LEGACY_OLLAMA_MODELS = {"qwen3-vl:2b-thinking"}
 
 
 def find_ollama_binary():
@@ -304,7 +307,10 @@ def auto_install_ollama():
 
 def is_model_installed(base_url="http://127.0.0.1:11434", model_name=DEFAULT_OLLAMA_MODEL, ollama_bin=None):
     """Check if model is present in Ollama via HTTP API or CLI."""
-    target_base = (model_name.split(":")[0] if ":" in model_name else model_name).lower()
+    target = model_name.lower()
+    accepted_names = {target}
+    if ":" not in target:
+        accepted_names.add(f"{target}:latest")
 
     # 1. Check HTTP API if service is running
     try:
@@ -313,7 +319,7 @@ def is_model_installed(base_url="http://127.0.0.1:11434", model_name=DEFAULT_OLL
             data = res.json()
             for m in data.get("models", []):
                 name = (m.get("name") or m.get("model") or "").lower()
-                if name == model_name.lower() or name.startswith(f"{target_base}:") or name == target_base:
+                if name in accepted_names:
                     return True
     except Exception:
         pass
@@ -323,7 +329,12 @@ def is_model_installed(base_url="http://127.0.0.1:11434", model_name=DEFAULT_OLL
     if bin_path:
         try:
             out = subprocess.check_output([bin_path, "list"], text=True, timeout=5, stderr=subprocess.DEVNULL)
-            if target_base in out.lower():
+            installed_names = {
+                line.split()[0].lower()
+                for line in out.splitlines()[1:]
+                if line.split()
+            }
+            if installed_names & accepted_names:
                 return True
         except Exception:
             pass
@@ -440,10 +451,10 @@ def ensure_ollama_model():
     Frappe hook called after_install and after_migrate.
     Automatically:
       1. Installs frontend node dependencies (@hugeicons/react, @hugeicons/core-free-icons).
-      2. Syncs all website knowledge articles into MariaDB.
+      2. Seeds introductions and synchronizes published website knowledge.
       3. Detects if Ollama is installed; if not, automatically installs it!
       4. Starts the Ollama service in background.
-      5. Pulls llama3.2:1b model automatically.
+      5. Keeps the preferred 4B model and the 1B fallback installed.
     """
     # 1. Install frontend node dependencies
     try:
@@ -451,17 +462,28 @@ def ensure_ollama_model():
     except Exception:
         pass
 
-    # 2. Sync Website Knowledge
+    # 2. Seed introductions and synchronize the website-owned knowledge.
     try:
+        from erpnextusa_ai_chatbot.seed_solufy_knowledge import seed
         from erpnextusa_ai_chatbot.sync_knowledge import sync_all
+
+        seed()
         sync_all()
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Auto Knowledge Sync Error")
+        frappe.log_error(frappe.get_traceback(), "Chatbot Knowledge Sync Error")
 
     # 3. Check and handle Ollama model
     try:
         cfg = frappe.get_single("Chatbot Settings")
-        model = cfg.ollama_model or DEFAULT_OLLAMA_MODEL
+        configured_model = (cfg.ollama_model or "").strip()
+        model = (
+            DEFAULT_OLLAMA_MODEL
+            if not configured_model or configured_model in LEGACY_OLLAMA_MODELS
+            else configured_model
+        )
+        if configured_model != model:
+            cfg.ollama_model = model
+            cfg.save(ignore_permissions=True)
         base = cfg.ollama_url or "http://127.0.0.1:11434"
 
         ollama_bin = find_ollama_binary()
@@ -476,12 +498,22 @@ def ensure_ollama_model():
             is_running = try_start_ollama_service(ollama_bin, base)
 
         if is_running or ollama_bin:
-            if not is_model_installed(base, model, ollama_bin):
-                print(f"[Ollama] Model '{model}' not found in Ollama. Auto-downloading: ollama pull {model} ...")
-                success, msg = pull_ollama_model(model, base, ollama_bin=ollama_bin, block=False)
-                print(f"[Ollama] {msg}")
-            else:
-                print(f"[Ollama] Model '{model}' is installed and ready.")
+            models = tuple(dict.fromkeys((model, *REQUIRED_OLLAMA_MODELS)))
+            for required_model in models:
+                if not is_model_installed(base, required_model, ollama_bin):
+                    print(
+                        f"[Ollama] Model '{required_model}' not found. "
+                        f"Auto-downloading: ollama pull {required_model} ..."
+                    )
+                    success, msg = pull_ollama_model(
+                        required_model,
+                        base,
+                        ollama_bin=ollama_bin,
+                        block=True,
+                    )
+                    print(f"[Ollama] {msg}")
+                else:
+                    print(f"[Ollama] Model '{required_model}' is installed and ready.")
         else:
             print("[Ollama] Local Ollama service is not running on this system.")
             print(f"         • The chatbot is ready and will use the built-in Solufy Knowledge Base.")

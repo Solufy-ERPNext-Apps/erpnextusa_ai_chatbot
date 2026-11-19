@@ -9,6 +9,8 @@ import requests
 from frappe import _
 from frappe.utils import cint
 
+from erpnextusa_ai_chatbot.setup_ollama import DEFAULT_OLLAMA_MODEL
+
 SETTINGS = "Chatbot Settings"
 CONSULTANT_LIMIT = 4
 DEFAULT_CONTACT_EMAIL = "contact@solufy.in"
@@ -362,6 +364,7 @@ def _knowledge_score(row, terms):
 def _knowledge_result(row, match_score=None):
     return {
         "title": clean(row.get("title"), 160),
+        "question": clean(row.get("question"), 300),
         "answer": clean(
             row.get("answer") or row.get("content"), 8000, preserve_lines=True
         ),
@@ -372,6 +375,35 @@ def _knowledge_result(row, match_score=None):
             match_score if match_score is not None else row.get("match_score") or 0
         ),
     }
+
+
+def _is_greeting(message):
+    return clean(message).lower().strip(" .!?,") in {
+        "hi",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "greetings",
+        "howdy",
+        "hola",
+        "namaste",
+        "what's up",
+        "whats up",
+    }
+
+
+def _remove_unrequested_greeting(message, answer):
+    if _is_greeting(message):
+        return answer
+    return re.sub(
+        r"^(?:hello|hi|hey)(?:\s+there)?[!,.:\s-]*",
+        "",
+        answer or "",
+        count=1,
+        flags=re.IGNORECASE,
+    ).lstrip()
 
 
 def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
@@ -400,28 +432,19 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
         if learned_answer:
             return learned_answer
     instruction = (
-        "You are the official AI Assistant for ERPNext USA (https://erpnextusa.com/) and Solufy (Solufy Pvt. Ltd. / Solufy ERP — https://www.solufyerp.com/). "
-        "You proudly represent ERPNext USA and Solufy as your company.\n\n"
-        "COMPANY HIGHLIGHTS & CREDENTIALS:\n"
-        "• Solufy is the premier Frappe engineering team behind ERPNext USA, with 13+ years of continuous mastery in ERPNext & Frappe (since 2014) and 100+ seasoned engineers.\n"
-        "• Headquartered in Gandhinagar, Gujarat, India, with dedicated US Timezone Overlap (EST & PST business hours coverage), direct US line: +1 (848) 248-0021, and email: contact@solufy.in.\n"
-        "• 100% Code & Data Ownership: Full open-source freedom without vendor lock-in or recurring per-user software licensing traps.\n"
-        "• Public GitHub: https://github.com/Solufy-ERPNext-Apps\n"
-        "• 7 Core Services: ERP Consulting, Custom Frappe Development, Full-cycle Implementation, Customization, Support & Maintenance, Role-based Training, and Integrations (Shopify, Amazon, Avalara, Stripe, FedEx, Delhivery, etc.).\n"
-        "• Industries: Discrete & Process Manufacturing, Food & Beverage, Retail & POS, Healthcare, Pharmaceuticals, Supply Chain & Logistics, Non-Profits, and Professional Services.\n\n"
-        "PERSONALITY & THE 'EVERYTHING CONNECTS TO ERPNEXT' SUPERPOWER:\n"
+        "You are the official AI Assistant for ERPNext USA. "
+        "Explain the approved website content clearly and in plain language.\n\n"
+        "RESPONSE RULES:\n"
+        "• APPROVED KNOWLEDGE is the only source for factual claims. Never add facts from general model knowledge or memory.\n"
+        "• If APPROVED KNOWLEDGE does not answer the question, say that the information is not available in the published website knowledge.\n"
         "• Tone: Enthusiastic, witty, friendly, and charmingly passionate about ERPNext and Frappe!\n"
-        "• THE DIRECT ERPNEXT WORKFLOW RULE (MANDATORY FOR OUT-OF-THE-BOX QUESTIONS):\n"
-        "  Whenever a user asks an everyday, creative, or non-ERP question (e.g., how to make green tea, about a water bottle / mobile bottle, baking, sports, poems, etc.):\n"
-        "  DO NOT provide culinary cooking recipes, steeping steps, long poems, or generic non-business guides!\n"
-        "  Instead, answer DIRECTLY in ERPNext business terms: explain with enthusiasm how this product or process is managed as an automated enterprise operation in ERPNext!\n"
-        "  Present 3 to 4 punchy, witty, and practical bullet points detailing the exact ERPNext Modules & DocTypes:\n"
-        "  - **Manufacturing Module:** Bill of Materials (BOM) specifying raw ingredients/materials, routed through Workstations and tracked with Job Cards.\n"
-        "  - **Stock & Inventory Module:** Strict Batch & Expiry tracking, Serial Numbers, and Automated Reorder Levels.\n"
-        "  - **Quality Inspection Module:** Parameter checkpoints (e.g., temperature threshold, QC inspection criteria) before clearance.\n"
-        "  - **Buying & Selling / POS:** Automated supplier Purchase Orders and omnichannel retail via ERPNext POS or Shopify/Amazon integrations.\n"
-        "  Keep responses under 130 words, engaging, friendly, and directly focused on ERPNext business automation.\n"
-        "• For direct ERP & business queries: Answer authoritatively, helpfully, and concisely using the approved knowledge context.\n"
+        "• Answer the user's actual question. Do not reuse an unrelated industry or module answer.\n"
+        "• Limit the scope to the supplied published ERPNext USA website knowledge.\n"
+        "• Never write or generate source code, scripts, commands, formulas, or implementation snippets.\n"
+        "• Do not recommend configurations, settings, custom fields, workflows, integrations, architecture, or implementation ideas.\n"
+        "• If asked for code or configuration advice, politely state that you can explain the relevant standard Frappe or ERPNext concept, then give only that explanation.\n"
+        "• If a question is unrelated to Frappe, ERPNext, or Solufy, say that your scope is Frappe and ERPNext knowledge and ask for a related question.\n"
+        "• Keep answers concise and vary the wording to suit the question without changing the approved facts.\n"
         "• Formatting: Use clean markdown, bold highlights, and friendly bullet points."
     )
     if country:
@@ -431,25 +454,12 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
             "partner, or compliance claims. Include a relevant approved source link when the knowledge provides one."
         )
 
-    is_greeting = question.lower().strip(" .!?,") in {
-        "hi",
-        "hello",
-        "hey",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "greetings",
-        "howdy",
-        "hola",
-        "namaste",
-        "what's up",
-        "whats up",
-    }
+    is_greeting = _is_greeting(question)
     if is_greeting:
         return (
             "Hello! I am your AI ERP Assistant for **ERPNext USA** (https://erpnextusa.com/) and **Solufy** (https://www.solufyerp.com/).\n\n"
-            "We provide full-cycle ERPNext consulting, implementation, custom Frappe app development, and SLA-backed support with dedicated US EST/PST business hours overlap.\n\n"
-            "How can I help you today? Feel free to ask about our services, implementation blueprints, or request a custom estimate!"
+            "I can explain Frappe, ERPNext, their standard modules, and Solufy's approved services. "
+            "I do not provide code or configuration recommendations. What would you like to learn?"
         )
 
     def _call_openai():
@@ -552,19 +562,17 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Invalid Ollama URL")
 
-        model = cfg.ollama_model or "llama3.2:1b"
+        model = cfg.ollama_model or DEFAULT_OLLAMA_MODEL
 
         ollama_instruction = (
-            "You are the official AI assistant for Solufy & ERPNext USA (13+ years Frappe mastery, US line +1-848-248-0021).\n"
-            "STRICT RULE: Do NOT give personal recipes, cooking steps, or non-business instructions. "
-            "Always answer immediately and directly with ERPNext modules and automated enterprise workflows!\n\n"
-            "Example:\n"
-            "In ERPNext, this process/product is managed as an automated enterprise workflow:\n"
-            "• **Manufacturing Module:** Bill of Materials (BOM) specifying raw ingredients with Workstations & Job Cards.\n"
-            "• **Stock & Inventory:** Batch & Expiry tracking with Automated Reorder Levels.\n"
-            "• **Quality Inspection:** Parameter testing (e.g., temperature/quality thresholds) before release.\n"
-            "• **POS & E-Commerce:** Omnichannel order routing via Shopify, Amazon, or POS.\n\n"
-            "Keep your response strictly under 75 words, friendly, and directly ERPNext-focused."
+            "You are the official AI assistant for Solufy and ERPNext USA. "
+            "Give clear, accurate knowledge about Frappe, ERPNext, their standard modules, and approved Solufy services.\n"
+            "Answer the user's exact question and do not repeat an unrelated answer. "
+            "Never generate source code, scripts, commands, formulas, or implementation snippets. "
+            "Do not suggest configurations, settings, custom fields, workflows, integrations, architecture, or implementation ideas. "
+            "When asked for code or configuration help, politely offer only a factual explanation of the relevant standard concept. "
+            "For unrelated questions, state that your scope is Frappe and ERPNext knowledge. "
+            "Keep the answer friendly, specific, and under 140 words."
         )
         if country:
             ollama_instruction += (
@@ -586,22 +594,23 @@ def provider_reply(cfg, question, knowledge, requested_model=None, country=""):
             {"role": "user", "content": question},
         ]
 
-        # Optimized CPU options: 4 threads, 1024 context, 80 tokens max generation
+        # Keep enough context and output space for distinct, question-specific answers.
         res = requests.post(
             base + "/api/chat",
             json={
                 "model": model,
                 "messages": ollama_messages,
                 "stream": False,
+                "think": True,
                 "keep_alive": "60m",
                 "options": {
                     "temperature": 0.2,
-                    "num_predict": 80,
-                    "num_ctx": 1024,
+                    "num_predict": 768,
+                    "num_ctx": 4096,
                     "num_thread": 4,
                 },
             },
-            timeout=min(timeout, 45),
+            timeout=max(timeout, 180),
         )
         if res.ok:
             return res.json()["message"]["content"]
@@ -786,15 +795,15 @@ FOLLOW_UP_TOPICS = (
     (
         ("implement", "setup", "rollout", "migration", "start"),
         (
-            "What would the first phase of our ERPNext rollout include?",
-            "Which data and workflows should we prepare before migration?",
+            "What does an ERPNext implementation mean?",
+            "What is data migration in ERPNext?",
         ),
     ),
     (
         ("custom", "develop", "app", "workflow", "integration", "frappe", "api"),
         (
-            "How would Solufy design this workflow in Frappe?",
-            "How can this customization remain safe during ERPNext upgrades?",
+            "What is the Frappe Framework?",
+            "What is the difference between Frappe and ERPNext?",
         ),
     ),
     (
@@ -808,25 +817,17 @@ FOLLOW_UP_TOPICS = (
 
 
 def build_follow_up_options(message, knowledge=None):
-    """Return next questions that reflect the visitor's current topic."""
-    text = clean(message, 1000).lower()
-    for keywords, questions in FOLLOW_UP_TOPICS:
-        if any(keyword in text for keyword in keywords):
-            return [*questions, "Contact Team"]
-
-    topic = _follow_up_topic(message, knowledge or [])
-    if topic:
-        return [
-            f"How could ERPNext support this requirement: {topic}?",
-            f"What would Solufy need to assess this process: {topic}?",
-            "Contact Team",
-        ]
-
-    return [
-        "Which ERPNext service is the best fit for our current needs?",
-        "What information should we share for an initial assessment?",
-        "Contact Team",
+    """Return questions from the matched website-owned knowledge."""
+    questions = [
+        clean(item.get("question"), 300)
+        for item in (knowledge or [])
+        if clean(item.get("question"), 300)
     ]
+    return list(
+        dict.fromkeys(
+            [*questions[:2], "What is ERPNext?", "What is the Frappe Framework?"]
+        )
+    )[:3]
 
 
 def _follow_up_topic(message, knowledge):
@@ -863,6 +864,80 @@ def is_consultant_request(message: str) -> bool:
         "consulting staff",
     )
     return any(phrase in text for phrase in phrases)
+
+
+def is_restricted_technical_request(message: str) -> bool:
+    text = clean(message, 1000).lower()
+    action_terms = (
+        "write code",
+        "generate code",
+        "source code",
+        "code for",
+        "code to",
+        "python code",
+        "javascript code",
+        "script for",
+        "create a script",
+        "implement this",
+        "how to configure",
+        "how do i configure",
+        "configuration idea",
+        "configuration suggestion",
+        "suggest a configuration",
+        "which setting",
+        "custom field",
+        "custom workflow",
+    )
+    return any(term in text for term in action_terms)
+
+
+def restricted_technical_answer(message: str) -> str:
+    text = clean(message, 1000).lower()
+    if "workflow" in text:
+        concept = (
+            "In Frappe and ERPNext, a workflow represents controlled document states and "
+            "role-based transitions, such as Draft, Pending Approval, and Approved."
+        )
+    elif "field" in text:
+        concept = (
+            "A field stores one defined piece of data on a Frappe DocType, while the DocType "
+            "describes the complete business record."
+        )
+    else:
+        concept = (
+            "Frappe is the application framework, and ERPNext is the business application "
+            "built on it."
+        )
+    return (
+        "I can explain standard Frappe and ERPNext concepts, but I cannot provide code, "
+        f"scripts, or configuration recommendations. {concept}"
+    )
+
+
+def canonical_knowledge_answer(message: str, knowledge: list[dict]) -> str:
+    normalized = re.sub(r"[^a-z0-9 ]", " ", clean(message, 300).lower())
+    normalized = " ".join(normalized.split())
+    expected_title = ""
+    if normalized in (
+        "what is erpnext",
+        "explain erpnext",
+        "define erpnext",
+        "tell me about erpnext",
+    ):
+        expected_title = "What ERPNext Is"
+    elif normalized in (
+        "what is frappe",
+        "what is frappe framework",
+        "what is the frappe framework",
+        "explain frappe",
+        "tell me about frappe",
+    ):
+        expected_title = "What the Frappe Framework Is"
+
+    for item in knowledge:
+        if item.get("title") == expected_title:
+            return item.get("answer") or ""
+    return ""
 
 
 def get_public_consultants() -> list[dict]:
@@ -920,38 +995,29 @@ def chat(message=None, session_id=None, model=None, country=None, **kwargs):
         frappe.throw(_("Enter a message"))
     cfg = settings_enabled()
     country = _visitor_country(country)
-    consultant_profiles = (
-        get_public_consultants() if is_consultant_request(message) else []
-    )
-    if consultant_profiles:
-        answer = "Here is our consulting team."
+    kb = []
+    answer = ""
+    if _is_greeting(message):
+        answer = (
+            "Hello! I can help with information published on ERPNext USA about "
+            "ERPNext and Frappe. What would you like to know?"
+        )
     else:
         kb = _retrieve_for_country(
             message,
             country,
             min(10, max(1, cint(cfg.max_knowledge_results) or 5)),
         )
-        try:
-            answer = provider_reply(
-                cfg,
-                message,
-                kb,
-                requested_model=model,
-                country=country,
-            )
-        except Exception:
-            frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Provider")
-            # Graceful fallback ONLY if AI providers failed completely
-            if kb:
-                primary = kb[0]
-                answer = primary.get("answer") or primary.get("content") or ""
-            else:
-                answer = (
-                    "I'm temporarily having trouble connecting to the AI language engine. "
-                    "For direct assistance with ERPNext implementations, customizations, or estimates, "
-                    "our engineering team is available at **contact@solufy.in** or call **+1 (848) 248-0021** (US Hours Overlap EST/PST)."
-                )
+        answer = canonical_knowledge_answer(message, kb)
+    if not answer and kb:
+        answer = kb[0].get("answer") or kb[0].get("content") or ""
+    if not answer:
+        answer = (
+            "I could not find that information in the published ERPNext USA website "
+            "knowledge yet. Please ask about content available on the website."
+        )
 
+    answer = _remove_unrequested_greeting(message, answer)
     answer = format_answer_links(answer)
     sid = clean(session_id, 100) if session_id else uuid.uuid4().hex
     try:
@@ -968,14 +1034,8 @@ def chat(message=None, session_id=None, model=None, country=None, **kwargs):
         frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Logging")
 
     res_data = {"answer": answer, "session_id": sid}
-    if consultant_profiles:
-        res_data["consultant_profiles"] = consultant_profiles
-        res_data["consultant_batch_size"] = CONSULTANT_LIMIT
-        res_data["suggest_lead"] = False
-        return res_data
-
-    res_data["suggest_lead"] = True
-    res_data["lead_prompt"] = "Related questions & next steps:"
+    res_data["suggest_lead"] = False
+    res_data["lead_prompt"] = "Related website knowledge:"
     res_data["lead_options"] = build_follow_up_options(message, kb)
     return res_data
 
