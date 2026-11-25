@@ -56,29 +56,30 @@ else
     echo "⚠️ Warning: Ollama service did not respond on port 11434 yet. If you see Ollama in your Mac Menu bar, click it to finish setup."
 fi
 
-# 3. Pull the preferred reasoning, vision, and tools model
-echo "• Pulling model 'qwen3-vl:4b-thinking' into Ollama..."
+# 3. Install a small default only when Ollama has no model yet
+OLLAMA_BIN=""
 if command -v ollama >/dev/null 2>&1; then
-    ollama pull qwen3-vl:4b-thinking
-    ollama pull llama3.2:1b
+    OLLAMA_BIN="$(command -v ollama)"
 elif [ -x "/opt/homebrew/bin/ollama" ]; then
-    /opt/homebrew/bin/ollama pull qwen3-vl:4b-thinking
-    /opt/homebrew/bin/ollama pull llama3.2:1b
+    OLLAMA_BIN="/opt/homebrew/bin/ollama"
 elif [ -x "/usr/local/bin/ollama" ]; then
-    /usr/local/bin/ollama pull qwen3-vl:4b-thinking
-    /usr/local/bin/ollama pull llama3.2:1b
+    OLLAMA_BIN="/usr/local/bin/ollama"
 elif [ -x "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
-    /Applications/Ollama.app/Contents/Resources/ollama pull qwen3-vl:4b-thinking
-    /Applications/Ollama.app/Contents/Resources/ollama pull llama3.2:1b
+    OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
+fi
+
+if [ -n "$OLLAMA_BIN" ] && [ "$("$OLLAMA_BIN" list | tail -n +2 | wc -l | tr -d ' ')" -gt 0 ]; then
+    echo "• An Ollama model is already installed; no additional model will be pulled."
+elif [ -n "$OLLAMA_BIN" ]; then
+    echo "• Pulling model 'llama3.2:1b' into Ollama..."
+    "$OLLAMA_BIN" pull llama3.2:1b
 else
-    # Try via HTTP API
-    echo "• Pulling via Ollama HTTP API..."
-    curl -s http://127.0.0.1:11434/api/pull -d '{"name": "qwen3-vl:4b-thinking", "stream": false}' || true
+    echo "• Pulling 'llama3.2:1b' via Ollama HTTP API..."
     curl -s http://127.0.0.1:11434/api/pull -d '{"name": "llama3.2:1b", "stream": false}' || true
 fi
 
 echo ""
 echo "========================================================"
-echo "✓ Setup Complete! Qwen 4B and Llama 1B are ready in Ollama."
+echo "✓ Setup Complete! Ollama has a model ready."
 echo "========================================================"
 

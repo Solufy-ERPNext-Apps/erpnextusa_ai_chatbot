@@ -15,7 +15,7 @@ bench restart
 
 If `bench get-app` does not support your local directory layout, put the extracted project in `apps/erpnextusa_ai_chatbot`, then install in the bench Python environment using `./env/bin/pip install -e apps/erpnextusa_ai_chatbot` before `install-app`.
 
-In Desk, open **Chatbot Settings**, configure provider and credentials, test connectivity, then enable the chatbot. Create **Chatbot Knowledge** entries and publish them.
+In Desk, open **Chatbot Settings**, configure provider and credentials, test connectivity, then enable the chatbot. Installation and migration seed curated articles, more than 500 installed ERPNext DocType reference entries, and published website knowledge into **Chatbot Knowledge**.
 
 ## Website embed
 
@@ -38,7 +38,7 @@ The Contact team tab contains an **unchecked, required consent checkbox**. Lead 
 - Password fields use Frappe's encrypted password storage.
 - Ollama must be accessible from the Frappe worker. Loopback HTTP or remote HTTPS is allowed. For remote hosts, use an allowlisted private endpoint and network egress controls to prevent SSRF.
 - The widget does not persist conversation history across page reloads; server logs are per message and include a session identifier.
-- Knowledge retrieval is keyword-based, not vector search. No website crawler or training pipeline is included.
+- Knowledge retrieval is keyword-based retrieval-augmented generation, not model fine-tuning. Install and migrate hooks rebuild knowledge from installed ERPNext metadata and synchronize published website records.
 - Consider deleting conversation logs after the configured retention period; the field is informational until a cleanup job is implemented.
 - Do not place API keys in website JavaScript.
 - Validate the precise Frappe/ERPNext version and provider API behavior on staging before production.

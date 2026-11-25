@@ -4,7 +4,12 @@ import frappe
 from frappe.utils import strip_html
 
 
-INTRODUCTION_TITLES = {"What ERPNext Is", "What the Frappe Framework Is"}
+CURATED_TITLES = {
+    "What ERPNext Is",
+    "What the Frappe Framework Is",
+    "ERPNext Compared with Odoo",
+}
+ERPNext_REFERENCE_PREFIX = "builtin:erpnext:"
 WEBSITE_SOURCE_DOCTYPES = (
     "Website Service",
     "Website Industry",
@@ -336,9 +341,12 @@ def prune_non_website_knowledge():
         limit_page_length=10000,
     )
     for row in rows:
-        is_introduction = row.title in INTRODUCTION_TITLES
+        is_curated = row.title in CURATED_TITLES
+        is_erpnext_reference = (row.source_url or "").startswith(
+            ERPNext_REFERENCE_PREFIX
+        )
         is_current_website_source = row.source_url in allowed_sources
-        if not is_introduction and not is_current_website_source:
+        if not is_curated and not is_erpnext_reference and not is_current_website_source:
             frappe.delete_doc("Chatbot Knowledge", row.name, ignore_permissions=True)
             removed += 1
     return removed

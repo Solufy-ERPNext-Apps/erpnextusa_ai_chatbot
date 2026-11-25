@@ -11,6 +11,8 @@ from erpnextusa_ai_chatbot.api import (
     is_consultant_request,
     is_company_summary_request,
     is_page_context_request,
+    is_page_identity_request,
+    page_identity_answer,
     page_metadata_answer,
     summarize_page_answer,
 )
@@ -22,6 +24,17 @@ class TestChatRelevance(TestCase):
 
     def test_current_page_summary_request_is_detected(self):
         self.assertTrue(is_page_context_request("what in this page summarized"))
+
+    def test_current_page_identity_request_is_detected(self):
+        message = "on which page i am"
+        self.assertTrue(is_page_context_request(message))
+        self.assertTrue(is_page_identity_request(message))
+
+    def test_current_page_identity_names_page_and_path(self):
+        self.assertEqual(
+            page_identity_answer("/about?source=chat", "About Solufy", "Meet Solufy"),
+            "You are on **Meet Solufy** (`/about`).",
+        )
 
     def test_misspelled_company_summary_request_is_detected(self):
         self.assertTrue(is_company_summary_request("Summurized the company solufy"))
@@ -72,6 +85,26 @@ class TestChatRelevance(TestCase):
 
         self.assertEqual(results[0], article)
 
+    def test_odoo_question_prefers_erp_comparison(self):
+        comparison = {
+            "title": "ERPNext Compared with Odoo",
+            "category": "ERP Comparison",
+            "match_score": 50,
+            "priority": 108,
+        }
+        case_study = {
+            "title": "Case Study: Manufacturing",
+            "category": "Case Study",
+            "match_score": 80,
+            "priority": 65,
+        }
+
+        results = _prioritize_knowledge_results(
+            "Is Odoo or ERPNext the right choice?", [case_study, comparison]
+        )
+
+        self.assertEqual(results[0], comparison)
+
     def test_industry_page_maps_to_exact_knowledge_source(self):
         self.assertEqual(
             _page_source_url("/industries/erpnext-for-manufacturing"),
@@ -95,6 +128,12 @@ class TestChatRelevance(TestCase):
             ),
             "**We're Solufy. We Support.**\n\n"
             "ERPNext implementation, consulting and support for US businesses.",
+        )
+
+    def test_page_summary_can_use_visible_page_content(self):
+        self.assertEqual(
+            page_metadata_answer("Support", "ERPNext Support", "", "Support plans and response options."),
+            "**ERPNext Support**\n\nSupport\n\nSupport plans and response options.",
         )
 
     @patch("erpnextusa_ai_chatbot.api.retrieve")

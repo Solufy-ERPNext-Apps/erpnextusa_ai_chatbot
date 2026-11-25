@@ -9,10 +9,7 @@ import requests
 from frappe import _
 from frappe.utils import cint
 
-from erpnextusa_ai_chatbot.setup_ollama import (
-    DEFAULT_OLLAMA_MODEL,
-    FALLBACK_OLLAMA_MODEL,
-)
+from erpnextusa_ai_chatbot.setup_ollama import DEFAULT_OLLAMA_MODEL
 
 SETTINGS = "Chatbot Settings"
 CONSULTANT_LIMIT = 4
@@ -366,7 +363,9 @@ def _normalize_search_question(question: str) -> str:
 def _prioritize_knowledge_results(question: str, results: list[dict]) -> list[dict]:
     words = set(re.findall(r"[a-z0-9]+", question.lower()))
     wants_article = bool(words & {"article", "blog", "guide", "insight", "read"})
-    if wants_article:
+    if words & {"odoo", "sap", "netsuite", "dynamics", "comparison", "compare", "versus"}:
+        preferred_categories = {"ERP Comparison"}
+    elif wants_article:
         preferred_categories = {"Blog"}
     elif words & {"team", "consultant", "consultants", "staff", "person", "people"}:
         preferred_categories = {"Team"}
@@ -558,6 +557,12 @@ def provider_reply(
         if knowledge
         else ""
     )
+    grounded_question = question
+    if knowledge and knowledge[0].get("category") == "ERP Comparison":
+        grounded_question = (
+            f"{question}\n\nAnswer using only these approved comparison facts. Do not add "
+            f"other product claims:\n{knowledge[0].get('answer') or ''}"
+        )
     if knowledge and knowledge[0].get("category") == "Chat Feedback":
         learned_answer = knowledge[0].get("answer") or knowledge[0].get("content")
         if learned_answer:
@@ -571,6 +576,8 @@ def provider_reply(
         "• Be welcoming, courteous, and genuinely passionate about helping businesses succeed with ERPNext and Frappe.\n"
         "• If you know the visitor's name or if they introduce themselves, greet and address them warmly by name.\n"
         "• APPROVED KNOWLEDGE is your factual foundation for ERPNext, Frappe, and Solufy services. Blend this knowledge naturally into your conversational answers instead of just copying raw text.\n"
+        "• Keep ERPNext as the primary subject. You may compare it with other ERP products when asked, but explain the tradeoffs fairly and bring the decision back to the visitor's business requirements.\n"
+        "• For ERP product comparisons, use only the supplied APPROVED KNOWLEDGE. Do not invent claims about product age, market size, popularity, editions, pricing, or which product is more customizable.\n"
         "• If APPROVED KNOWLEDGE does not contain the answer, politely let them know that the specific detail is not available on the website, and invite them to connect with Solufy's consulting team.\n"
         "• Never write or generate raw source code, scripts, commands, formulas, or implementation snippets.\n"
         "• Do not recommend unvetted custom configurations, custom fields, or architecture; explain standard Frappe/ERPNext concepts and features conceptually.\n"
@@ -606,7 +613,7 @@ def provider_reply(
         messages = [{"role": "system", "content": sys_msg}]
         if history:
             messages.extend(history)
-        messages.append({"role": "user", "content": question})
+        messages.append({"role": "user", "content": grounded_question})
         res = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": "Bearer " + key},
@@ -662,7 +669,7 @@ def provider_reply(
                     for h in history:
                         role = "user" if h.get("role") == "user" else "model"
                         contents.append({"role": role, "parts": [{"text": h.get("content") or ""}]})
-                contents.append({"role": "user", "parts": [{"text": question}]})
+                contents.append({"role": "user", "parts": [{"text": grounded_question}]})
                 res = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
                     headers={"x-goog-api-key": key},
@@ -704,8 +711,6 @@ def provider_reply(
 
         configured_model = (cfg.ollama_model or DEFAULT_OLLAMA_MODEL).strip()
         models_to_try = [configured_model]
-        if FALLBACK_OLLAMA_MODEL not in models_to_try:
-            models_to_try.append(FALLBACK_OLLAMA_MODEL)
 
         ollama_instruction = (
             "You are the official AI consultant for Solufy and ERPNext USA. "
@@ -714,6 +719,8 @@ def provider_reply(
             "If you know the visitor's name, greet and address them warmly by name.\n"
             "Approved website knowledge is your foundation for facts about Frappe, ERPNext, standard modules, and Solufy's services. "
             "Explain them conversationally rather than just dumping raw text.\n"
+            "Keep ERPNext as the primary subject. When asked about another ERP, compare it fairly with ERPNext and relate the answer to the visitor's requirements.\n"
+            "For ERP product comparisons, use only RELEVANT APPROVED KNOWLEDGE. Do not add claims about product age, popularity, market size, pricing, or which product is more customizable.\n"
             "Never write or generate raw source code, scripts, commands, or formulas. "
             "Do not suggest custom unvetted configurations or workflows; explain standard Frappe/ERPNext concepts conceptually.\n"
             "Keep the answer friendly, engaging, and concise (under 160 words)."
@@ -728,7 +735,7 @@ def provider_reply(
         if context:
             compact_snippets = []
             for item in knowledge[:3]:
-                ans_text = clean(item.get("answer") or item.get("content") or "", 200)
+                ans_text = clean(item.get("answer") or item.get("content") or "", 700)
                 if ans_text:
                     compact_snippets.append(f"• {item['title']}: {ans_text}")
             if compact_snippets:
@@ -741,7 +748,7 @@ def provider_reply(
         ]
         if history:
             ollama_messages.extend(history)
-        ollama_messages.append({"role": "user", "content": question})
+        ollama_messages.append({"role": "user", "content": grounded_question})
 
         last_ollama_err = None
         for m in models_to_try:
@@ -1148,6 +1155,10 @@ def get_public_consultants() -> list[dict]:
 
 def is_page_context_request(message: str) -> bool:
     text = clean(message, 500).lower()
+    asks_which_page = "page" in text and any(
+        phrase in text
+        for phrase in ("where am i", "where i am", "which page", "what page", "page am i")
+    )
     return any(
         phrase in text
         for phrase in (
@@ -1158,6 +1169,14 @@ def is_page_context_request(message: str) -> bool:
             "page summary",
             "page summarized",
         )
+    ) or asks_which_page
+
+
+def is_page_identity_request(message: str) -> bool:
+    text = clean(message, 500).lower()
+    return "page" in text and any(
+        phrase in text
+        for phrase in ("where am i", "where i am", "which page", "what page", "page am i")
     )
 
 
@@ -1228,11 +1247,14 @@ def summarize_page_answer(answer: str) -> str:
     return "\n\n".join(summary)
 
 
-def page_metadata_answer(title: str, heading: str, description: str) -> str:
+def page_metadata_answer(
+    title: str, heading: str, description: str, content: str = ""
+) -> str:
     title = clean(title, 200)
     heading = clean(heading, 300)
     description = clean(description, 700)
-    if not any((title, heading, description)):
+    content = clean(content, 3000)
+    if not any((title, heading, description, content)):
         return (
             "I cannot identify enough published content on this page to summarize it."
         )
@@ -1242,7 +1264,15 @@ def page_metadata_answer(title: str, heading: str, description: str) -> str:
         blocks.append(description)
     elif title and heading and title != heading:
         blocks.append(title)
+    if content and content not in blocks:
+        blocks.append(content)
     return "\n\n".join(blocks)
+
+
+def page_identity_answer(page: str, title: str, heading: str) -> str:
+    path = urlparse(clean(page, 500)).path or "/"
+    name = clean(heading, 300) or clean(title, 200) or "this page"
+    return f"You are on **{name}** (`{path}`)."
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -1255,6 +1285,7 @@ def chat(
     page_title=None,
     page_heading=None,
     page_description=None,
+    page_content=None,
     **kwargs,
 ):
     throttle("chat", 60, 60)
@@ -1286,10 +1317,14 @@ def chat(
         answer = company_summary_answer()
     elif page_context:
         kb = get_page_knowledge(page)
-        if kb:
+        if is_page_identity_request(message):
+            answer = page_identity_answer(page, page_title, page_heading)
+        elif kb:
             answer = summarize_page_answer(kb[0].get("answer") or "")
         else:
-            answer = page_metadata_answer(page_title, page_heading, page_description)
+            answer = page_metadata_answer(
+                page_title, page_heading, page_description, page_content
+            )
     else:
         limit = min(10, max(1, cint(cfg.max_knowledge_results) or 5))
         kb = _retrieve_for_country(message, country, limit)
