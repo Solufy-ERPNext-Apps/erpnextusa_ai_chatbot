@@ -6,7 +6,7 @@ app_email = "savan.p.solufy@gmail.com"
 app_license = "MIT"
 # Embed externally via script tag; do not inject widget into every Desk page.
 
-required_apps = ["frappe", "erpnext"]
+required_apps = ["erpnext"]
 
 after_install = "erpnextusa_ai_chatbot.setup_ollama.ensure_ollama_model"
 after_migrate = "erpnextusa_ai_chatbot.setup_ollama.ensure_ollama_model"
