@@ -7,7 +7,6 @@ app_license = "MIT"
 # Embed externally via script tag; do not inject widget into every Desk page.
 
 required_apps = ["frappe", "erpnext"]
-requirements = ["ollama>=0.0.1", "requests>=2.31.0"]
 
 after_install = "erpnextusa_ai_chatbot.setup_ollama.ensure_ollama_model"
 after_migrate = "erpnextusa_ai_chatbot.setup_ollama.ensure_ollama_model"
