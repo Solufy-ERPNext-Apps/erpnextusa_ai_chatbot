@@ -13,5 +13,5 @@ include = ["erpnextusa_ai_chatbot*"]
 "*" = ["*.json", "*.js", "*.css", "*.txt"]
 
 [tool.bench.frappe-dependencies]
-  frappe = ">=16.0.0,<17.0.0"
+  frappe = ">=16.0.0,<17.0.0",
   erpnext = ">=16.0.0,<17.0.0"
