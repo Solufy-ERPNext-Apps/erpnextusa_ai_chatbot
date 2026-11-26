@@ -111,6 +111,7 @@
     {
       "fieldname": "retention_days",
       "label": "Conversation Retention Days",
+      "description": "Conversations older than this are deleted daily. 0 keeps them forever.",
       "fieldtype": "Int",
       "default": "30"
     }

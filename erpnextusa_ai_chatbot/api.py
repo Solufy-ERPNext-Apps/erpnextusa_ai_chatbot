@@ -1,13 +1,14 @@
 import hashlib
+import hmac
 import re
 import uuid
-import html
 from urllib.parse import urlparse
 
 import frappe
 import requests
 from frappe import _
 from frappe.utils import cint
+from frappe.utils.password import get_encryption_key
 
 from erpnextusa_ai_chatbot.setup_ollama import DEFAULT_OLLAMA_MODEL
 
@@ -468,6 +469,25 @@ def extract_visitor_name(message: str) -> str:
     return ""
 
 
+def issue_session_id() -> str:
+    raw = uuid.uuid4().hex
+    return f"{raw}.{_session_signature(raw)}"
+
+
+def verified_session_id(value) -> str:
+    """Return the session id when the server signed it, otherwise an empty string."""
+    session_id = clean(value, 100)
+    raw, _, signature = session_id.partition(".")
+    if raw and signature and hmac.compare_digest(signature, _session_signature(raw)):
+        return session_id
+    return ""
+
+
+def _session_signature(raw: str) -> str:
+    key = get_encryption_key().encode()
+    return hmac.new(key, raw.encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def get_session_visitor_name(session_id: str) -> str:
     if not session_id:
         return ""
@@ -536,7 +556,6 @@ def provider_reply(
     history=None,
     visitor_name="",
 ):
-    import time
 
     provider = cfg.active_provider
 
@@ -1283,7 +1302,7 @@ def chat(
     if not message:
         frappe.throw(_("Enter a message"))
     cfg = settings_enabled()
-    sid = clean(session_id, 100) if session_id else uuid.uuid4().hex
+    sid = verified_session_id(session_id) or issue_session_id()
 
     # Detect and persist visitor name for this session
     detected_name = extract_visitor_name(message)
@@ -1448,7 +1467,7 @@ def submit_lead(name=None, email=None, phone=None, message=None, consent=0):
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def like_response(session_id=None, message=None, answer=None, liked=1):
     throttle("like", 60, 60)
-    session_id = clean(session_id, 100)
+    session_id = verified_session_id(session_id)
     message = clean(message, 1000)
     answer = clean(answer, 2000)
     is_liked = cint(liked)

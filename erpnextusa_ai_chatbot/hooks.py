@@ -35,6 +35,9 @@ doc_events = {
 }
 
 scheduler_events = {
-    "daily": ["erpnextusa_ai_chatbot.sync_knowledge.sync_all"],
+    "daily": [
+        "erpnextusa_ai_chatbot.sync_knowledge.sync_all",
+        "erpnextusa_ai_chatbot.erpnextusa_ai_chatbot.doctype.chatbot_conversation.chatbot_conversation.delete_expired_conversations",
+    ],
 }
 

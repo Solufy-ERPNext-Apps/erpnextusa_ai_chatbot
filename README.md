@@ -42,6 +42,6 @@ The Contact team tab contains an **unchecked, required consent checkbox**. Lead 
 - A liked answer is saved as an unpublished **Chat Feedback** entry in Chatbot Knowledge. A System Manager must review and publish it before the chatbot uses it.
 - The widget does not persist conversation history across page reloads; server logs are per message and include a session identifier.
 - Knowledge retrieval is keyword-based retrieval-augmented generation, not model fine-tuning. Install and migrate hooks rebuild knowledge from installed ERPNext metadata and synchronize published website records.
-- Consider deleting conversation logs after the configured retention period; the field is informational until a cleanup job is implemented.
+- A daily job deletes conversation logs older than **Conversation Retention Days** (default 30). Set it to 0 to keep logs forever.
 - Do not place API keys in website JavaScript.
 - Validate the precise Frappe/ERPNext version and provider API behavior on staging before production.

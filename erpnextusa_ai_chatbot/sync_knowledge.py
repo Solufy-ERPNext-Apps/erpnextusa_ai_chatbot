@@ -4,13 +4,7 @@ import frappe
 from frappe.utils import strip_html
 
 
-CURATED_TITLES = {
-    "What ERPNext Is",
-    "What the Frappe Framework Is",
-    "ERPNext Compared with Odoo",
-}
-ERPNext_REFERENCE_PREFIX = "builtin:erpnext:"
-CHAT_FEEDBACK_PREFIX = "chat-feedback:"
+WEBSITE_SOURCE_PREFIX = "auto:"
 WEBSITE_SOURCE_DOCTYPES = (
     "Website Service",
     "Website Industry",
@@ -257,7 +251,7 @@ def sync_blog_post(doc, method=None):
     
     route = getattr(doc, "route", None) or doc.name
     public_url = f"{PUBLIC_WEBSITE_URL}/{route.lstrip('/')}"
-    parts.append(f"For more information, read the full article:")
+    parts.append("For more information, read the full article:")
     parts.append(f"👉 [Read Full Guide: {title}]({public_url})")
 
     answer = "\n\n".join(parts)
@@ -333,31 +327,23 @@ def sync_all():
 
 
 def prune_non_website_knowledge():
-    """Remove stale or generated knowledge that is not backed by this website."""
+    """Remove synced website knowledge whose source record no longer exists."""
     allowed_sources = set()
     for doctype in WEBSITE_SOURCE_DOCTYPES:
         if not frappe.db.exists("DocType", doctype):
             continue
         allowed_sources.update(
-            f"auto:{doctype}:{name}"[:140]
+            f"{WEBSITE_SOURCE_PREFIX}{doctype}:{name}"[:140]
             for name in frappe.db.get_all(doctype, pluck="name")
         )
 
-    removed = 0
     rows = frappe.get_all(
         "Chatbot Knowledge",
-        fields=["name", "title", "source_url"],
-        limit_page_length=10000,
+        filters={"source_url": ["like", f"{WEBSITE_SOURCE_PREFIX}%"]},
+        fields=["name", "source_url"],
+        limit_page_length=0,
     )
-    for row in rows:
-        is_curated = row.title in CURATED_TITLES
-        is_erpnext_reference = (row.source_url or "").startswith(
-            ERPNext_REFERENCE_PREFIX
-        )
-        is_current_website_source = row.source_url in allowed_sources
-        is_chat_feedback = (row.source_url or "").startswith(CHAT_FEEDBACK_PREFIX)
-        if not (is_curated or is_erpnext_reference or is_current_website_source or is_chat_feedback):
-            frappe.delete_doc("Chatbot Knowledge", row.name, ignore_permissions=True)
-            removed += 1
-    return removed
-
+    stale = [row.name for row in rows if row.source_url not in allowed_sources]
+    for name in stale:
+        frappe.delete_doc("Chatbot Knowledge", name, ignore_permissions=True)
+    return len(stale)

@@ -1,10 +1,12 @@
 import inspect
+from datetime import datetime
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 import frappe
 
 from erpnextusa_ai_chatbot import api, hooks, sync_knowledge
+from erpnextusa_ai_chatbot.erpnextusa_ai_chatbot.doctype.chatbot_conversation import chatbot_conversation
 
 
 def mock_knowledge_lookup(qb, rows):
@@ -86,17 +88,53 @@ class TestLikedResponses(TestCase):
         get_doc.assert_not_called()
 
 
-class TestPruneKeepsChatFeedback(TestCase):
+class TestPruneOnlySyncedKnowledge(TestCase):
     @patch.object(sync_knowledge.frappe, "delete_doc")
     @patch.object(sync_knowledge.frappe, "get_all")
     @patch.object(sync_knowledge.frappe, "db", new=MagicMock(**{"exists.return_value": False}))
-    def test_chat_feedback_survives_prune(self, get_all, delete_doc):
-        get_all.return_value = [
-            frappe._dict(name="KB-1", title="Liked", source_url="chat-feedback:abc"),
-            frappe._dict(name="KB-2", title="Stale", source_url="auto:Website Service:old"),
-        ]
+    def test_prune_only_touches_website_synced_entries(self, get_all, delete_doc):
+        get_all.return_value = [frappe._dict(name="KB-2", source_url="auto:Website Service:old")]
 
         removed = sync_knowledge.prune_non_website_knowledge()
 
+        self.assertEqual(get_all.call_args.kwargs["filters"], {"source_url": ["like", "auto:%"]})
         self.assertEqual(removed, 1)
         delete_doc.assert_called_once_with("Chatbot Knowledge", "KB-2", ignore_permissions=True)
+
+
+@patch.object(api, "get_encryption_key", return_value="test-key")
+class TestSessionIds(TestCase):
+    def test_issued_session_id_verifies(self, _key):
+        session_id = api.issue_session_id()
+
+        self.assertEqual(api.verified_session_id(session_id), session_id)
+
+    def test_client_chosen_session_id_is_rejected(self, _key):
+        for value in ("1732600000000", "abc.def", "", None):
+            self.assertEqual(api.verified_session_id(value), "")
+
+    def test_tampered_signature_is_rejected(self, _key):
+        raw, _, signature = api.issue_session_id().partition(".")
+
+        self.assertEqual(api.verified_session_id(f"{raw}.{signature[:-1]}0"), "")
+
+
+class TestConversationRetention(TestCase):
+    @patch.object(chatbot_conversation, "now_datetime", return_value=datetime(2026, 11, 26))
+    @patch.object(chatbot_conversation.frappe, "db", new_callable=MagicMock)
+    def test_deletes_conversations_older_than_retention(self, db, _now):
+        db.get_single_value.return_value = 30
+
+        chatbot_conversation.delete_expired_conversations()
+
+        db.delete.assert_called_once_with(
+            "Chatbot Conversation", {"creation": ["<", datetime(2026, 10, 27)]}
+        )
+
+    @patch.object(chatbot_conversation.frappe, "db", new_callable=MagicMock)
+    def test_zero_retention_keeps_conversations(self, db):
+        db.get_single_value.return_value = 0
+
+        chatbot_conversation.delete_expired_conversations()
+
+        db.delete.assert_not_called()
