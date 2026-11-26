@@ -500,11 +500,11 @@ def get_session_history(session_id: str, limit: int = 6) -> list[dict]:
         "Chatbot Conversation",
         filters={"session_id": session_id},
         fields=["visitor_message", "assistant_message"],
-        order_by="creation asc",
+        order_by="creation desc",
         limit_page_length=limit,
     )
     history = []
-    for r in rows:
+    for r in reversed(rows):
         if r.get("visitor_message"):
             history.append({"role": "user", "content": clean(r.visitor_message, 1000)})
         if r.get("assistant_message"):
@@ -532,7 +532,6 @@ def provider_reply(
     cfg,
     question,
     knowledge,
-    requested_model=None,
     country="",
     history=None,
     visitor_name="",
@@ -540,14 +539,6 @@ def provider_reply(
     import time
 
     provider = cfg.active_provider
-    if requested_model:
-        rm = str(requested_model).lower()
-        if "gemini" in rm:
-            provider = "Gemini"
-        elif "llama" in rm or "ollama" in rm:
-            provider = "Ollama"
-        elif "openai" in rm or "gpt" in rm:
-            provider = "OpenAI"
 
     timeout = min(90, max(5, cint(cfg.request_timeout) or 45))
     temperature = max(0, min(1, float(cfg.temperature or 0.45)))
@@ -1279,7 +1270,6 @@ def page_identity_answer(page: str, title: str, heading: str) -> str:
 def chat(
     message=None,
     session_id=None,
-    model=None,
     country=None,
     page=None,
     page_title=None,
@@ -1333,7 +1323,6 @@ def chat(
                 cfg,
                 message,
                 kb,
-                requested_model=model,
                 country=country,
                 history=history,
                 visitor_name=visitor_name,
@@ -1500,27 +1489,30 @@ def _get_feedback_conversation(session_id: str, message: str, answer: str):
 
 
 def _sync_learned_response(message: str, answer: str, liked: int) -> str | None:
-    normalized_question = " ".join(message.lower().split())
+    """Record a guest like as an unpublished draft; a System Manager reviews and publishes it."""
+    normalized_question = " ".join(_normalize_search_question(message).split())
     feedback_key = hashlib.sha256(normalized_question.encode()).hexdigest()[:24]
     source_url = f"chat-feedback:{feedback_key}"
     knowledge = frappe.qb.DocType("Chatbot Knowledge")
     existing_rows = (
         frappe.qb.from_(knowledge)
-        .select(knowledge.name)
+        .select(knowledge.name, knowledge.answer)
         .where(knowledge.source_url == source_url)
         .limit(1)
     ).run(as_dict=True)
-    existing = existing_rows[0].name if existing_rows else None
+    existing = existing_rows[0] if existing_rows else None
 
     if not liked:
-        if existing:
+        return existing.name if existing else None
+
+    if existing:
+        if existing.answer == answer:
             (
                 frappe.qb.update(knowledge)
-                .set(knowledge.published, 0)
-                .set(knowledge.likes, 0)
-                .where(knowledge.name == existing)
+                .set(knowledge.likes, knowledge.likes + 1)
+                .where(knowledge.name == existing.name)
             ).run()
-        return existing
+        return existing.name
 
     terms = list(
         dict.fromkeys(
@@ -1529,28 +1521,23 @@ def _sync_learned_response(message: str, answer: str, liked: int) -> str | None:
             if word not in STOP_WORDS
         )
     )
-    values = {
-        "title": clean(message, 140),
-        "published": 1,
-        "priority": 100,
-        "category": "Chat Feedback",
-        "keywords": ", ".join(terms[:20]),
-        "question": message,
-        "answer": answer,
-        "content": answer,
-        "source_url": source_url,
-        "likes": 1,
-    }
-    if existing:
-        update = frappe.qb.update(knowledge).where(knowledge.name == existing)
-        for fieldname, value in values.items():
-            update = update.set(getattr(knowledge, fieldname), value)
-        update.run()
-        return existing
-
-    learned = frappe.get_doc({"doctype": "Chatbot Knowledge", **values})
-    learned.insert(ignore_permissions=True)
-    return learned.name
+    draft = frappe.get_doc(
+        {
+            "doctype": "Chatbot Knowledge",
+            "title": clean(message, 140),
+            "published": 0,
+            "priority": 100,
+            "category": "Chat Feedback",
+            "keywords": ", ".join(terms[:20]),
+            "question": normalized_question,
+            "answer": answer,
+            "content": answer,
+            "source_url": source_url,
+            "likes": 1,
+        }
+    )
+    draft.insert(ignore_permissions=True)
+    return draft.name
 
 
 @frappe.whitelist(methods=["POST"])

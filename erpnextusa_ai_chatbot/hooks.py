@@ -8,8 +8,8 @@ app_license = "MIT"
 
 required_apps = ["erpnext"]
 
-after_install = "erpnextusa_ai_chatbot.setup_ollama.ensure_ollama_model"
-after_migrate = "erpnextusa_ai_chatbot.setup_ollama.ensure_ollama_model"
+after_install = "erpnextusa_ai_chatbot.sync_knowledge.refresh_knowledge"
+after_migrate = "erpnextusa_ai_chatbot.sync_knowledge.refresh_knowledge"
 
 doc_events = {
     "Website Service": {

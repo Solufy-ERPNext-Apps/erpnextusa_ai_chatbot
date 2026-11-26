@@ -10,6 +10,7 @@ CURATED_TITLES = {
     "ERPNext Compared with Odoo",
 }
 ERPNext_REFERENCE_PREFIX = "builtin:erpnext:"
+CHAT_FEEDBACK_PREFIX = "chat-feedback:"
 WEBSITE_SOURCE_DOCTYPES = (
     "Website Service",
     "Website Industry",
@@ -277,6 +278,14 @@ def sync_blog_post(doc, method=None):
 # Bulk Initial Synchronization Script
 # -------------------------------------------------------------------------
 
+def refresh_knowledge():
+    """Seed curated knowledge and sync website records; runs after install and migrate."""
+    from erpnextusa_ai_chatbot.seed_solufy_knowledge import seed
+
+    seed()
+    sync_all()
+
+
 def sync_all():
     """Reconcile chatbot knowledge with the current website records."""
     counts = {"Service": 0, "Industry": 0, "Case Study": 0, "Team": 0, "Blog": 0}
@@ -346,7 +355,8 @@ def prune_non_website_knowledge():
             ERPNext_REFERENCE_PREFIX
         )
         is_current_website_source = row.source_url in allowed_sources
-        if not is_curated and not is_erpnext_reference and not is_current_website_source:
+        is_chat_feedback = (row.source_url or "").startswith(CHAT_FEEDBACK_PREFIX)
+        if not (is_curated or is_erpnext_reference or is_current_website_source or is_chat_feedback):
             frappe.delete_doc("Chatbot Knowledge", row.name, ignore_permissions=True)
             removed += 1
     return removed

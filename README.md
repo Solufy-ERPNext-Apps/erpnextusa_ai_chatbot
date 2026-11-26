@@ -37,6 +37,9 @@ The Contact team tab contains an **unchecked, required consent checkbox**. Lead 
 - Only System Managers can access Settings, Knowledge and Conversations.
 - Password fields use Frappe's encrypted password storage.
 - Ollama must be accessible from the Frappe worker. Loopback HTTP or remote HTTPS is allowed. For remote hosts, use an allowlisted private endpoint and network egress controls to prevent SSRF.
+- Install and migrate never install software. To install Ollama and pull a model on this server, run `bench --site YOUR-SITE execute erpnextusa_ai_chatbot.setup_ollama.ensure_ollama_model` manually.
+- The active provider is set only in Chatbot Settings; website visitors cannot choose it.
+- A liked answer is saved as an unpublished **Chat Feedback** entry in Chatbot Knowledge. A System Manager must review and publish it before the chatbot uses it.
 - The widget does not persist conversation history across page reloads; server logs are per message and include a session identifier.
 - Knowledge retrieval is keyword-based retrieval-augmented generation, not model fine-tuning. Install and migrate hooks rebuild knowledge from installed ERPNext metadata and synchronize published website records.
 - Consider deleting conversation logs after the configured retention period; the field is informational until a cleanup job is implemented.
