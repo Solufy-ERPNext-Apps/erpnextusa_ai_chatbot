@@ -16,6 +16,9 @@ SETTINGS = "Chatbot Settings"
 CONSULTANT_LIMIT = 4
 DEFAULT_CONTACT_EMAIL = "contact@solufy.in"
 DEFAULT_CONTACT_PHONE = "+1 (848) 248-0021"
+OLLAMA_CONTEXT_TOKENS = 1536
+OLLAMA_KNOWLEDGE_CHARS = 320
+OLLAMA_MAX_OUTPUT_TOKENS = 120
 
 
 def clean(value, limit=8000, preserve_lines=False):
@@ -281,7 +284,7 @@ STOP_WORDS = {
 }
 
 
-def retrieve(question, limit=5):
+def retrieve(question, limit=5, market=""):
     knowledge = frappe.qb.DocType("Chatbot Knowledge")
     question = _normalize_search_question(question)
     normalized_question = " ".join(question.lower().split())
@@ -296,6 +299,7 @@ def retrieve(question, limit=5):
             knowledge.question,
             knowledge.priority,
             knowledge.likes,
+            knowledge.source_url,
         )
         .where(
             (knowledge.published == 1)
@@ -336,17 +340,43 @@ def retrieve(question, limit=5):
             knowledge.question,
             knowledge.priority,
             knowledge.likes,
+            knowledge.source_url,
         )
         .where((knowledge.published == 1) & matches)
         .limit(200)
     ).run(as_dict=True)
+    market_rows = [row for row in rows if _knowledge_matches_market(row, market)]
     ranked = sorted(
-        (_knowledge_result(row, _knowledge_score(row, terms)) for row in rows),
+        (_knowledge_result(row, _knowledge_score(row, terms)) for row in market_rows),
         key=lambda row: (row["match_score"], row["priority"]),
         reverse=True,
     )
     relevant = [row for row in ranked if row["match_score"] >= 4]
     return _prioritize_knowledge_results(question, relevant)[:limit]
+
+
+def _knowledge_matches_market(row, market):
+    market = clean(market, 20).lower()
+    if market not in {"india", "usa"}:
+        return True
+
+    source = str(row.get("source_url") or "").lower()
+    searchable = " ".join(
+        str(row.get(field) or "").lower()
+        for field in ("title", "keywords", "question")
+    )
+    india_markers = ("solufy.in", "solufyerp.in", " india", "gst", "inr")
+    usa_markers = (
+        "erpnextusa.com",
+        " united states",
+        " usa",
+        "u.s.",
+        "sales tax",
+        " usd",
+    )
+    if market == "india":
+        return not any(marker in source or marker in searchable for marker in usa_markers)
+    return not any(marker in source or marker in searchable for marker in india_markers)
 
 
 def _normalize_search_question(question: str) -> str:
@@ -555,9 +585,13 @@ def provider_reply(
     country="",
     history=None,
     visitor_name="",
+    market="",
 ):
 
     provider = cfg.active_provider
+    market = clean(market, 20).lower()
+    market_name = "India" if market == "india" else "USA"
+    market_url = "https://solufy.in/" if market == "india" else "https://erpnextusa.com/"
 
     timeout = min(90, max(5, cint(cfg.request_timeout) or 45))
     temperature = max(0, min(1, float(cfg.temperature or 0.45)))
@@ -579,7 +613,7 @@ def provider_reply(
             return learned_answer
 
     instruction = (
-        "You are the official AI consultant for Solufy and ERPNext USA (https://erpnextusa.com/). "
+        f"You are the official AI consultant for Solufy and ERPNext {market_name} ({market_url}). "
         "Talk like a warm, helpful, friendly human being in a natural conversational tone. "
         "Never give dry, robotic, or overly stiff textbook answers.\n\n"
         "CONVERSATIONAL GUIDELINES:\n"
@@ -609,7 +643,7 @@ def provider_reply(
         name_part = f" {visitor_name}" if visitor_name else ""
         return (
             f"Hello{name_part}! 😊 It's wonderful to connect with you! I'm your AI consultant for "
-            "**ERPNext USA** (https://erpnextusa.com/) and **Solufy** (https://www.solufyerp.com/).\n\n"
+            f"**ERPNext {market_name}** ({market_url}) and **Solufy**.\n\n"
             "How can I help you today? I'd love to tell you more about ERPNext, Frappe, or our implementation and consulting services."
         )
 
@@ -723,7 +757,7 @@ def provider_reply(
         models_to_try = [configured_model]
 
         ollama_instruction = (
-            "You are the official AI consultant for Solufy and ERPNext USA. "
+            f"You are the official AI consultant for Solufy and ERPNext {market_name} ({market_url}). "
             "Talk like a warm, helpful, friendly human being in a natural conversational tone. "
             "Never give dry, robotic, or overly stiff textbook answers.\n"
             "If you know the visitor's name, greet and address them warmly by name.\n"
@@ -733,7 +767,7 @@ def provider_reply(
             "For ERP product comparisons, use only RELEVANT APPROVED KNOWLEDGE. Do not add claims about product age, popularity, market size, pricing, or which product is more customizable.\n"
             "Never write or generate raw source code, scripts, commands, or formulas. "
             "Do not suggest custom unvetted configurations or workflows; explain standard Frappe/ERPNext concepts conceptually.\n"
-            "Keep the answer friendly, engaging, and concise (under 160 words)."
+            "Keep the answer friendly and complete in 90 to 110 words. Use no more than three short bullets."
         )
         if visitor_name:
             ollama_instruction += f"\nVISITOR NAME: {visitor_name}. Greet them and refer to them naturally by name."
@@ -745,7 +779,10 @@ def provider_reply(
         if context:
             compact_snippets = []
             for item in knowledge[:3]:
-                ans_text = clean(item.get("answer") or item.get("content") or "", 700)
+                ans_text = clean(
+                    item.get("answer") or item.get("content") or "",
+                    OLLAMA_KNOWLEDGE_CHARS,
+                )
                 if ans_text:
                     compact_snippets.append(f"• {item['title']}: {ans_text}")
             if compact_snippets:
@@ -772,17 +809,24 @@ def provider_reply(
                         "stream": False,
                         "options": {
                             "temperature": 0.45,
-                            "num_predict": 350,
-                            "num_ctx": 4096,
+                            "num_predict": min(max_tokens, OLLAMA_MAX_OUTPUT_TOKENS),
+                            "num_ctx": OLLAMA_CONTEXT_TOKENS,
                             "num_thread": 4,
                         },
                     },
                     timeout=m_timeout,
                 )
                 if res.ok:
-                    msg = res.json().get("message", {})
+                    payload = res.json()
+                    msg = payload.get("message", {})
                     content = msg.get("content") or ""
                     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                    if payload.get("done_reason") == "length":
+                        sentence_ends = list(
+                            re.finditer(r"[.!?](?:[\"')\]]*)?(?=\s|$)", content)
+                        )
+                        if sentence_ends:
+                            content = content[: sentence_ends[-1].end()].strip()
                     if content:
                         return content
                 last_ollama_err = ValueError(f"Ollama error on {m}: {res.text}")
@@ -1295,6 +1339,7 @@ def chat(
     page_heading=None,
     page_description=None,
     page_content=None,
+    market=None,
     **kwargs,
 ):
     throttle("chat", 60, 60)
@@ -1314,6 +1359,9 @@ def chat(
     history = get_session_history(sid, limit=6)
 
     country = _visitor_country(country)
+    market = clean(market, 20).lower()
+    if market not in {"india", "usa"}:
+        market = "usa"
     kb = []
     answer = ""
     page_context = is_page_context_request(message)
@@ -1336,7 +1384,7 @@ def chat(
             )
     else:
         limit = min(10, max(1, cint(cfg.max_knowledge_results) or 5))
-        kb = _retrieve_for_country(message, country, limit)
+        kb = _retrieve_for_country(message, country, limit, market)
         try:
             answer = provider_reply(
                 cfg,
@@ -1345,6 +1393,7 @@ def chat(
                 country=country,
                 history=history,
                 visitor_name=visitor_name,
+                market=market,
             )
         except Exception:
             frappe.log_error(frappe.get_traceback(), "ERPNextUSA Chat Provider")
@@ -1383,7 +1432,7 @@ def chat(
         res_data["suggest_lead"] = False
         return res_data
 
-    res_data["suggest_lead"] = False
+    res_data["suggest_lead"] = True
     res_data["lead_prompt"] = "Related website knowledge:"
     res_data["lead_options"] = build_follow_up_options(message, kb)
     return res_data
@@ -1403,12 +1452,12 @@ def _visitor_country(country):
     return ""
 
 
-def _retrieve_for_country(message, country, limit):
-    knowledge = retrieve(message, limit)
+def _retrieve_for_country(message, country, limit, market=""):
+    knowledge = retrieve(message, limit, market=market)
     if not country or not knowledge:
         return knowledge
 
-    country_knowledge = retrieve(f"{message} {country}", limit)
+    country_knowledge = retrieve(f"{message} {country}", limit, market=market)
     merged = []
     seen = set()
     # The visitor's question is the primary signal. Country enrichment must not
